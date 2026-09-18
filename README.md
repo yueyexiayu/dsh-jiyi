@@ -1,8 +1,8 @@
 # jiyi
 
-DeepSeek Harness 桌面插件。借鉴 [Grok Build v2](https://github.com/xai-org/grok-build) 的跨会话记忆：Markdown topic、回合后观察、生成索引，在下一轮开始前注入模型。
+DeepSeek Harness 官方桌面端的跨会话记忆。右侧栏「开始」页增加 **记忆** 入口：Markdown topic、回合后观察、生成索引，在下一轮开始前注入模型。
 
-不是对 Grok 源码的移植。存储、调度和 UI 是本插件的 JavaScript 实现。
+面向 **官方桌面**（`connection.fetch`），不依赖 `webServer`，也不走 `dsh plugin --profile desktop`。
 
 ## 做什么
 
@@ -25,6 +25,12 @@ DeepSeek Harness 桌面插件。借鉴 [Grok Build v2](https://github.com/xai-or
 ```
 
 完全退出 DeepSeek Harness（macOS：⌘Q）再打开。展开右侧栏，在「开始」里会出现 **记忆**。已有会话不会补上注入，需新开。
+
+## 说明
+
+- 面向官方桌面；不要用 `dsh plugin install` 往 desktop profile 塞依赖
+- 记忆文件在 `$DSH_HOME/jiyi/`，不进本仓库、也不写进用户项目
+- 仓库不含本机 patch、账号或凭据
 
 ## 开发
 

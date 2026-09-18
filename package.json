@@ -2,7 +2,7 @@
   "name": "jiyi",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH desktop plugin: Grok v2-style cross-session memory (topics, inbox, index injection).",
+  "description": "DSH desktop plugin: cross-session memory (topics, inbox, index injection).",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
