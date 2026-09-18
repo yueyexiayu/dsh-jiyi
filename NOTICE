@@ -1,0 +1,10 @@
+jiyi is a DeepSeek Harness desktop plugin.
+
+Its memory layout and product loop (topics, observation inbox, generated
+MEMORY.md index, post-turn capture, later consolidation) are inspired by
+the Apache-2.0 Grok Build project:
+
+  https://github.com/xai-org/grok-build
+
+This plugin does not copy Grok Build source. It is an independent
+JavaScript implementation for the DSH desktop plugin host.
