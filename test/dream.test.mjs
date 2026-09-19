@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { applyDreamPlan, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, sanitizeTopicContent } from "../lib/dream.js";
+import { applyDreamPlan, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, pickVia, sanitizeTopicContent } from "../lib/dream.js";
 import { extractRouteList } from "../lib/parse.js";
 import { remember } from "../lib/storage.js";
 
@@ -67,6 +67,23 @@ test("sanitizeTopicContent drops invented fallbacks", () => {
   const text = sanitizeTopicContent("# Testing\n\n- Use just test\n- If just test is unavailable or fails, fall back to cargo test\n");
   assert.match(text, /just test/);
   assert.doesNotMatch(text, /fall back/);
+});
+
+test("sanitizeTopicContent keeps user-stated fallbacks", () => {
+  const decision = "如果主测试失败则运行离线备选命令";
+  const text = sanitizeTopicContent(`# Testing\n\n- ${decision}\n`, [decision]);
+  assert.match(text, /备选命令/);
+});
+
+test("parseDreamPlan rejects missing topics", () => {
+  assert.throws(() => parseDreamPlan("{}"), /malformed/);
+  assert.throws(() => parseDreamPlan("{\"rename\":[],\"delete\":[]}"), /malformed/);
+});
+
+test("pickVia does not let noop cover failed", () => {
+  assert.equal(pickVia("failed", "noop"), "failed");
+  assert.equal(pickVia("noop", "failed"), "failed");
+  assert.equal(pickVia("llm", "failed"), "failed");
 });
 
 test("dream folds inbox into topics", async () => {
@@ -158,4 +175,82 @@ test("empty dream plan archives inbox", async () => {
   const after = await listEntries(root, cwd, null);
   assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "inbox").length, 0);
   assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "archive").length, 1);
+});
+
+test("malformed empty object keeps inbox and fails", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await remember(root, cwd, null, { text: "use just test", topicHint: "testing" });
+  const { listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  const result = await dreamAll(path.join(root, "global"), wsDir, {
+    routes: extractRouteList(),
+    keys: { ZAI_CODING_CN_API_KEY: "zai" },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "{}" } }] }),
+    }),
+  });
+  assert.equal(result.via, "failed");
+  const after = await listEntries(root, cwd, null);
+  assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "inbox").length, 1);
+});
+
+test("in-flight dream does not resurrect a deleted topic", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await remember(root, cwd, null, { text: "use just test", topicHint: "testing" });
+  const { deleteEntry, listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  const topicPath = path.join(wsDir, "topics", "testing.md");
+  await writeFile(topicPath, "# Testing\n\n- old\n");
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const pending = dreamAll(path.join(root, "global"), wsDir, {
+    routes: extractRouteList(),
+    keys: { ZAI_CODING_CN_API_KEY: "zai" },
+    fetchImpl: async () => {
+      entered();
+      await gate;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                topics: [{ slug: "testing", content: "# Testing\n\nresurrected\n" }],
+                rename: [],
+                delete: [],
+              }),
+            },
+          }],
+        }),
+      };
+    },
+  });
+  await started;
+  await deleteEntry(root, topicPath);
+  release();
+  await pending;
+  await assert.rejects(() => readFile(topicPath, "utf8"));
+});
+
+test("failed global is not covered by workspace noop", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await remember(root, cwd, null, { text: "prefer concise answers", scope: "global", topicHint: "preferences" });
+  const { listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  const result = await dreamAll(path.join(root, "global"), wsDir, {
+    routes: extractRouteList(),
+    keys: { ZAI_CODING_CN_API_KEY: "zai" },
+    fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) }),
+  });
+  assert.equal(result.via, "failed");
+  assert.equal(result.remaining >= 1, true);
 });

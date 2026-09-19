@@ -72,6 +72,8 @@ test("实测 and similar tasks skip LLM extract", () => {
   assert.equal(shouldSkipLlmExtract("帮我实测 jiyi 插件是否存在漏洞"), true);
   assert.equal(shouldSkipTurn("帮我实测 jiyi 插件是否存在漏洞"), false);
   assert.equal(shouldSkipLlmExtract("用 just test，不要 cargo test"), false);
+  assert.equal(shouldSkipLlmExtract("帮我实测 jiyi 插件，不要改源码"), true);
+  assert.equal(shouldSkipLlmExtract("Please test the plugin"), true);
 });
 
 test("collectTurnNotes uses local extract for tasks and keeps LLM noop", async () => {
@@ -104,6 +106,16 @@ test("collectTurnNotes uses local extract for tasks and keeps LLM noop", async (
   assert.equal(fromLlm[0].statement, "Use just test");
   const noop = await collectTurnNotes(durable, 3, async () => []);
   assert.deepEqual(noop, []);
+
+  const englishTask = [
+    { type: "user/message", data: { turn: 4, message: { content: [{ type: "text", text: "Please test the plugin" }] } } },
+  ];
+  const skippedEn = await collectTurnNotes(englishTask, 4, async () => {
+    llmCalls += 1;
+    return [{ statement: "should not save" }];
+  });
+  assert.equal(skippedEn.length, 0);
+  assert.equal(llmCalls, 0);
 });
 
 test("ignores plugin and instruction user messages", () => {
