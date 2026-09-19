@@ -106,6 +106,7 @@ test("classifyRelative recognizes layout", () => {
   assert.equal(classifyRelative("MEMORY.md"), "index");
   assert.equal(classifyRelative("topics/testing.md"), "topic");
   assert.equal(classifyRelative("observations/_inbox/n.md"), "inbox");
+  assert.equal(classifyRelative("observations/_conflicts/n.md"), "conflict");
   assert.equal(classifyRelative("topics/nested/no.md"), "other");
 });
 

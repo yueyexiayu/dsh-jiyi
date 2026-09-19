@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { applyDreamPlan, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, pickVia, sanitizeTopicContent } from "../lib/dream.js";
+import { applyDreamPlan, conflictsWith, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, pickVia, sanitizeTopicContent } from "../lib/dream.js";
 import { extractRouteList } from "../lib/parse.js";
 import { remember } from "../lib/storage.js";
 
@@ -154,6 +154,13 @@ test("dream pool failure leaves inbox and does not rule-merge", async () => {
   assert.equal(inbox.length, 1);
 });
 
+test("conflictsWith detects negated existing facts", () => {
+  const existing = "# Testing\n\n- Use just test, never cargo test\n";
+  assert.equal(conflictsWith(existing, "Use just test, never cargo test"), false);
+  assert.equal(conflictsWith(existing, "switch to cargo test"), true);
+  assert.equal(conflictsWith(existing, "prefer concise replies"), false);
+});
+
 test("empty dream plan archives inbox", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
   const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
@@ -174,7 +181,7 @@ test("empty dream plan archives inbox", async () => {
   assert.equal(result.via, "noop");
   const after = await listEntries(root, cwd, null);
   assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "inbox").length, 0);
-  assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "archive").length, 1);
+  assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "archive").length, 0);
 });
 
 test("apiKey empty plan archives instead of rule-merging", async () => {
@@ -305,6 +312,23 @@ test("in-flight dream does not merge a deleted inbox observation", async () => {
   const topic = await readFile(path.join(wsDir, "topics", "notes.md"), "utf8");
   assert.match(topic, /keep this workspace fact/);
   assert.doesNotMatch(topic, /delete this inbox fact/);
+});
+
+test("conflicting observation is kept visible and not merged", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  const { listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  await writeFile(path.join(wsDir, "topics", "testing.md"), "# Testing\n\n- Use just test, never cargo test\n");
+  await remember(root, cwd, null, { text: "switch to cargo test", topicHint: "testing" });
+  await dreamAll(path.join(root, "global"), wsDir);
+  const after = await listEntries(root, cwd, null);
+  assert.equal(after.entries.filter((item) => item.group === "conflict").length, 1);
+  assert.equal(after.entries.filter((item) => item.group === "inbox").length, 0);
+  const topic = await readFile(path.join(wsDir, "topics", "testing.md"), "utf8");
+  assert.match(topic, /just test/);
+  assert.doesNotMatch(topic, /switch to cargo test/);
 });
 
 test("failed global is not covered by workspace noop", async () => {
