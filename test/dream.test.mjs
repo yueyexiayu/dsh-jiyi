@@ -177,6 +177,28 @@ test("empty dream plan archives inbox", async () => {
   assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "archive").length, 1);
 });
 
+test("apiKey empty plan archives instead of rule-merging", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await remember(root, cwd, null, { text: "use just test", topicHint: "testing" });
+  const { listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  const result = await dreamAll(path.join(root, "global"), wsDir, {
+    apiKey: "test-key",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify({ topics: [], rename: [], delete: [] }) } }],
+      }),
+    }),
+  });
+  assert.equal(result.via, "noop");
+  const after = await listEntries(root, cwd, null);
+  assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "inbox").length, 0);
+  assert.equal(after.entries.filter((item) => item.scope === "workspace" && item.group === "topics").length, 0);
+});
+
 test("malformed empty object keeps inbox and fails", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
   const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
@@ -237,6 +259,52 @@ test("in-flight dream does not resurrect a deleted topic", async () => {
   release();
   await pending;
   await assert.rejects(() => readFile(topicPath, "utf8"));
+});
+
+test("in-flight dream does not merge a deleted inbox observation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await remember(root, cwd, null, { text: "keep this workspace fact", topicHint: "notes" });
+  const removed = await remember(root, cwd, null, { text: "delete this inbox fact", topicHint: "notes" });
+  const { deleteEntry, listEntries } = await import("../lib/storage.js");
+  const listed = await listEntries(root, cwd, null);
+  const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const pending = dreamAll(path.join(root, "global"), wsDir, {
+    routes: extractRouteList(),
+    keys: { ZAI_CODING_CN_API_KEY: "zai" },
+    fetchImpl: async () => {
+      entered();
+      await gate;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                topics: [{
+                  slug: "notes",
+                  content: "# Notes\n\n- keep this workspace fact\n- delete this inbox fact\n",
+                }],
+                rename: [],
+                delete: [],
+              }),
+            },
+          }],
+        }),
+      };
+    },
+  });
+  await started;
+  await deleteEntry(root, removed.path);
+  release();
+  await pending;
+  const topic = await readFile(path.join(wsDir, "topics", "notes.md"), "utf8");
+  assert.match(topic, /keep this workspace fact/);
+  assert.doesNotMatch(topic, /delete this inbox fact/);
 });
 
 test("failed global is not covered by workspace noop", async () => {

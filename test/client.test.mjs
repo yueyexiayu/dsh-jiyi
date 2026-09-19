@@ -7,7 +7,7 @@ test("client guards Enter, versions preview reads, and surfaces dream failures",
   assert.match(src, /event\.key === "Enter" && note\.trim\(\) && !busy && !off/);
   assert.match(src, /previewGen/);
   assert.match(src, /previewGen\.current !== gen/);
-  assert.match(src, /via === "failed"/);
+  assert.match(src, /dream\.via === "failed"/);
   assert.match(src, /disabled: busy \|\| off/);
   assert.match(src, /模型读取\/删除/);
 });

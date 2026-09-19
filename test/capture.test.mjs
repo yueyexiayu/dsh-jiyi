@@ -74,6 +74,11 @@ test("实测 and similar tasks skip LLM extract", () => {
   assert.equal(shouldSkipLlmExtract("用 just test，不要 cargo test"), false);
   assert.equal(shouldSkipLlmExtract("帮我实测 jiyi 插件，不要改源码"), true);
   assert.equal(shouldSkipLlmExtract("Please test the plugin"), true);
+  assert.equal(isTaskRequest("测试用 just test，不要 cargo test"), false);
+  assert.equal(shouldSkipLlmExtract("测试用 just test，不要 cargo test"), false);
+  assert.equal(extractObservations("测试用 just test，不要 cargo test").length, 1);
+  assert.equal(isTaskRequest("Run tests with just test, never cargo test"), false);
+  assert.equal(extractObservations("Run tests with just test, never cargo test").length, 1);
 });
 
 test("collectTurnNotes uses local extract for tasks and keeps LLM noop", async () => {
