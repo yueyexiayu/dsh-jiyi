@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { applyDreamPlan, conflictsWith, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, pickVia, sanitizeTopicContent } from "../lib/dream.js";
 import { extractRouteList } from "../lib/parse.js";
-import { remember } from "../lib/storage.js";
+import { ensureLayout, remember } from "../lib/storage.js";
 
 test("parseObservation reads frontmatter", () => {
   const parsed = parseObservation("---\ntype: project\ntopic: testing\ncreated: 2026-01-01T00:00:00.000Z\n---\n\nuse just test\n");
@@ -20,19 +20,13 @@ test("mergeIntoTopic is idempotent on same statement", () => {
   assert.match(first, /^# Testing/);
 });
 
-test("parseDreamPlan keeps only valid topic files", () => {
-  const plan = parseDreamPlan(`\`\`\`json
-{"topics":[
-  {"slug":"Testing Stuff","content":"# Testing\\n\\nUse just test.\\n"},
-  {"slug":"bad","content":"no heading"},
-  {"slug":"x","content":""}
-]}
-\`\`\``);
-  assert.equal(plan.topics.length, 1);
+test("parseDreamPlan rejects the whole partially invalid plan", () => {
+  assert.throws(() => parseDreamPlan(JSON.stringify({ topics: [
+    { slug: "testing", content: "# Testing\n\nUse just test." },
+    { slug: "bad", content: "no heading" },
+  ] })), /malformed/);
+  const plan = parseDreamPlan(JSON.stringify({ topics: [{ slug: "Testing Stuff", content: "# Testing\n\nUse just test." }] }));
   assert.equal(plan.topics[0].slug, "testing-stuff");
-  assert.match(plan.topics[0].content, /^# Testing/);
-  assert.deepEqual(plan.rename, []);
-  assert.deepEqual(plan.delete, []);
 });
 
 test("parseDreamPlan reads rename and delete", () => {
@@ -317,6 +311,7 @@ test("in-flight dream does not merge a deleted inbox observation", async () => {
 test("conflicting observation is kept visible and not merged", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
   const cwd = "/Users/ning/.dsh/jiyi-test-workspace";
+  await ensureLayout(root, cwd, null);
   const { listEntries } = await import("../lib/storage.js");
   const listed = await listEntries(root, cwd, null);
   const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   classifyRelative,
   deleteEntry,
+  ensureLayout,
   isEphemeralCwd,
   listEntries,
   loadSettings,
@@ -135,12 +136,14 @@ test("path escape is rejected", async () => {
   await assert.rejects(() => readEntry(root, outside), /escapes/);
 });
 
-test("corrupt settings recover to defaults", async () => {
+test("corrupt settings fail closed with a visible error", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
-  await writeFile(path.join(root, "settings.json"), "null");
-  assert.equal((await loadSettings(root)).enabled, true);
-  await writeFile(path.join(root, "settings.json"), "{");
-  assert.equal((await loadSettings(root)).enabled, true);
+  for (const invalid of ["null", "{", "[]", '{"enabled":"false"}']) {
+    await writeFile(path.join(root, "settings.json"), invalid);
+    await assert.rejects(() => loadSettings(root), /settings are corrupt.*disabled/);
+    await assert.rejects(() => saveSettings(root, { enabled: true }), /settings are corrupt/);
+    assert.equal(await readFile(path.join(root, "settings.json"), "utf8"), invalid);
+  }
 });
 
 test("remember rejects oversized body", async () => {
@@ -163,6 +166,7 @@ test("concurrent remember writes all inbox files", async () => {
 
 test("manifest truncation respects utf8 bytes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
+  await ensureLayout(root, TEST_CWD, null);
   const listed = await listEntries(root, TEST_CWD, null);
   const wsDir = path.dirname(listed.entries.find((item) => item.scope === "workspace" && item.group === "index").path);
   await mkdir(path.join(wsDir, "topics"), { recursive: true });
@@ -179,13 +183,12 @@ test("directory symlink outside store is not listed or written", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));
   const outside = await mkdtemp(path.join(tmpdir(), "jiyi-out-"));
   await writeFile(path.join(outside, "secret.md"), "# Secret\n\nexternal\n");
-  await listEntries(root, TEST_CWD, null);
+  await ensureLayout(root, TEST_CWD, null);
   const { rm } = await import("node:fs/promises");
   const globalTopics = path.join(root, "global", "topics");
   await rm(globalTopics, { recursive: true, force: true });
   await symlink(outside, globalTopics);
-  const listed = await listEntries(root, TEST_CWD, null);
-  assert.equal(listed.entries.filter((item) => item.scope === "global" && item.group === "topics").length, 0);
+  await assert.rejects(() => listEntries(root, TEST_CWD, null), /escapes/);
 
   const inbox = path.join(root, "global", "observations", "_inbox");
   await rm(inbox, { recursive: true, force: true });
