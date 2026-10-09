@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { dreamScope, parseDreamPlan, recoverDreamTransaction, MAX_DREAM_BATCH, MAX_DREAM_INPUT_CHARS } from "../lib/dream.js";
+import { dreamScope, drainScope, parseDreamPlan, recoverDreamTransaction, MAX_DREAM_BATCH, MAX_DREAM_INPUT_CHARS } from "../lib/dream.js";
 import { ensureLayout, remember } from "../lib/storage.js";
 
 const reply = (plan) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(plan) } }] }) });
@@ -147,6 +147,32 @@ test("symlink output target never overwrites outside files", async () => {
   await assert.rejects(dreamScope(f.scope, { apiKey: "fake", fetchImpl: reply({ topics: [{ slug: "notes", content: "# Notes\n\nchanged" }] }) }), /symlink|symbolic/i);
   assert.equal(await readFile(external, "utf8"), "outside untouched");
   assert.equal((await readdir(f.inbox)).length, 1);
+});
+
+test("drain continues in batches of 10 until the inbox is empty", async () => {
+  const f = await fixture(MAX_DREAM_BATCH * 2 + 5);
+  const sizes = [];
+  const result = await drainScope(f.scope, { apiKey: "fake", fetchImpl: async (_url, init) => {
+    sizes.push(JSON.parse(JSON.parse(init.body).messages[1].content).observations.length);
+    return reply({ topics: [] })();
+  } });
+  assert.deepEqual(sizes, [MAX_DREAM_BATCH, MAX_DREAM_BATCH, 5]);
+  assert.equal(result.remaining, 0);
+  assert.equal(result.archived, MAX_DREAM_BATCH * 2 + 5);
+  assert.equal((await readdir(f.inbox)).length, 0);
+});
+
+test("observations written during a dream stay for the next batch", async () => {
+  const f = await fixture(2);
+  const result = await dreamScope(f.scope, { apiKey: "fake", fetchImpl: async () => {
+    await remember(f.root, "/tmp/fixture-project", null, { text: "A later convention", scope: "global", topicHint: "notes" });
+    return reply({ topics: [] })();
+  } });
+  assert.notEqual(result.via, "failed");
+  assert.equal(result.archived, 2);
+  assert.equal((await readdir(f.inbox)).length, 1);
+  const left = await readFile(path.join(f.inbox, (await readdir(f.inbox))[0]), "utf8");
+  assert.match(left, /A later convention/);
 });
 
 test("schema rejects malformed operation collections and duplicate slugs", () => {
