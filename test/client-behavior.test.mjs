@@ -77,6 +77,7 @@ function harness() {
     errors: () => all(tree).filter(n => n.props.className === "jy-error").map(text),
     text: () => text(tree),
     poll() { [...intervals.values()].forEach(fn => fn()); render(); },
+    fireTimers() { [...timers.values()].forEach(fn => fn()); },
     session(sessionId) { props = { sessionId }; render(); },
     unmount() { hooks.forEach(h => h?.cleanup?.()); mounted = false; },
     writesAfterUnmount: () => writesAfterUnmount,
@@ -142,6 +143,22 @@ test("remember only clears the submitted draft revision", async () => {
   assert.equal(h.input().props.value, "");
 });
 
+test("empty list distinguishes loading, failure and no memories; timeout is a failure", async () => {
+  const h = harness();
+  assert.match(h.text(), /正在加载…/);
+  assert.doesNotMatch(h.text(), /还没有记忆|加载失败/);
+  h.fireTimers();
+  await h.settle();
+  assert.match(h.text(), /加载失败/);
+  assert.match(h.errors().join("\n"), /加载超时/);
+  assert.doesNotMatch(h.text(), /还没有记忆/);
+  h.click("刷新");
+  h.requests.at(-1).resolve({ ok: true, enabled: true, origin: "workspace", entries: [] });
+  await h.settle();
+  assert.match(h.text(), /还没有记忆/);
+  assert.doesNotMatch(h.text(), /加载失败|加载超时/);
+});
+
 test("successful empty read is not loading; read errors disable deletion", async () => {
   const h = await ready(); h.click("AA");
   h.requests[1].resolve({ ok: true, content: "" }); await h.settle();
@@ -158,12 +175,12 @@ test("session change cancels status/read/operation, prevents stale writes and cl
   for (const request of [read, operation, poll]) assert.equal(request.signal?.aborted, true);
   read.resolve({ ok: true, content: "OLD PREVIEW" }); operation.resolve({ ok: true }); poll.resolve(status("OLD SESSION"));
   await h.settle();
-  assert.doesNotMatch(h.text(), /OLD PREVIEW|OLD SESSION/); assert.equal(h.timers.size, 0);
+  assert.doesNotMatch(h.text(), /OLD PREVIEW|OLD SESSION/); assert.equal(h.timers.size, 1);
   const current = h.requests.findLast(r => r.body.action === "status" && r.body.sessionId === "T");
   current.resolve(status("NEW SESSION")); await h.settle();
   assert.match(h.text(), /NEW SESSION/);
   h.type("T draft"); h.click("记下"); h.requests.at(-1).resolve({ ok: true }); await h.settle();
-  assert.equal(h.timers.size, 1);
+  assert.equal(h.timers.size, 2);
   const pendingStatus = h.requests.at(-1); h.unmount();
   assert.equal(h.timers.size, 0); assert.equal(h.intervals.size, 0); assert.equal(pendingStatus.signal.aborted, true);
   pendingStatus.resolve(status()); await new Promise(resolve => setImmediate(resolve));
