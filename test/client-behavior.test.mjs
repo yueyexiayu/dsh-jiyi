@@ -243,6 +243,15 @@ test("unverified LLM coverage reports processing and archive without claiming me
   assert.doesNotMatch(h.text(), /已合并|全部合并/);
 });
 
+test("cancelled and incomplete turns are not displayed as completed capture; dream scope is explicit", async () => {
+  const h = harness(); h.requests[0].resolve(status("workspace", { lastCapture: { status: "cancelled", turn: 2 } })); await h.settle();
+  assert.match(h.text(), /本会话回合已取消，未完成采集/);
+  assert.match(h.text(), /后台整理范围：全局及所有工作区/);
+  h.poll(); h.requests[1].resolve(status("workspace", { lastCapture: { status: "skipped", reason: "max-tokens" } })); await h.settle();
+  assert.match(h.text(), /未正常完成，已跳过采集/);
+  assert.doesNotMatch(h.text(), /回合已取消|采集成功/);
+});
+
 test("disabled memory blocks Enter and displays backend failures", async () => {
   const h = harness(); h.requests[0].resolve(status("workspace", { enabled: false, lastDream: { via: "failed", remaining: 2 } })); await h.settle();
   h.type("draft"); h.input().props.onKeyDown({ key: "Enter" });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, tmpdir } from "./fixture.mjs";
 import * as path from "node:path";
 import { applyDreamPlan, conflictsWith, dreamAll, mergeIntoTopic, parseDreamPlan, parseObservation, pickVia, sanitizeTopicContent } from "../lib/dream.js";
 import { extractRouteList } from "../lib/parse.js";

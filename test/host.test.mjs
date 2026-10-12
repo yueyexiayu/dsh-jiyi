@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, tmpdir } from "./fixture.mjs";
 import * as path from "node:path";
 import { apply, statusForError } from "../lib/index.js";
 import { remember } from "../lib/storage.js";
 
-const TEST_CWD = "/Users/ning/.dsh/jiyi-test-workspace";
+const TEST_CWD = "/fixture/jiyi-project";
+let disposals = [];
 
 function mockCtx({ cwd = TEST_CWD, keys = {} } = {}) {
   let handler;
@@ -15,6 +15,7 @@ function mockCtx({ cwd = TEST_CWD, keys = {} } = {}) {
   const agents = new Map([
     ["s1", { session: { header: { cwd }, requestHeader: () => ({ cwd }) } }],
   ]);
+  disposals.push(async () => { for (const listener of listeners.get("dispose") || []) await listener(); });
   return {
     ctx: {
       credentials: {
@@ -48,6 +49,7 @@ async function withHome(fn) {
   try {
     return await fn(home);
   } finally {
+    for (const dispose of disposals.splice(0)) await dispose();
     if (prev == null) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = prev;
   }
@@ -62,13 +64,13 @@ test("statusForError maps client vs server failures", () => {
   assert.equal(statusForError(new Error("boom")), 500);
 });
 
-async function status(mock) {
-  return (await mock.call(new Request("http://127.0.0.1/api/jiyi?action=status&sessionId=s1"))).json();
+async function status(mock, sessionId = "s1") {
+  return (await mock.call(new Request("http://127.0.0.1/api/jiyi?action=status&sessionId=" + sessionId))).json();
 }
 
-async function waitCapture(mock) {
+async function waitCapture(mock, sessionId = "s1") {
   for (let i = 0; i < 100; i += 1) {
-    const body = await status(mock);
+    const body = await status(mock, sessionId);
     if (body.lastCapture && body.lastCapture.status !== "running") return body;
     await new Promise((resolve) => setImmediate(resolve));
   }
@@ -149,7 +151,7 @@ test("a failed workspace observation write is not reported as saved", async () =
     }) } }] }) });
     try {
       await mock.emit("session/event", session, { type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } });
-      const body = await waitCapture(mock);
+      const body = await waitCapture(mock, "");
       assert.equal(body.lastCapture.status, "failed");
       assert.equal(body.lastCapture.count, 0);
       assert.equal(body.inboxCount, 0);
@@ -175,7 +177,7 @@ test("host rejects invalid json and scoped path escapes", async () => {
     assert.equal(missing.status, 400);
 
     const root = path.join(home, "jiyi");
-    const other = await remember(root, "/Users/ning/.dsh/jiyi-other-workspace", "github.com/other/app", {
+    const other = await remember(root, "/fixture/jiyi-other-project", "github.com/other/app", {
       text: "secret from other repo",
     });
     const cross = await mock.call(new Request("http://127.0.0.1/api/jiyi", {

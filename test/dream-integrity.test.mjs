@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, writeFile, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, tmpdir } from "./fixture.mjs";
 import * as path from "node:path";
 import { dreamScope, drainScope, parseDreamPlan, recoverDreamTransaction, MAX_DREAM_BATCH, MAX_DREAM_INPUT_CHARS } from "../lib/dream.js";
 import { ensureLayout, remember } from "../lib/storage.js";

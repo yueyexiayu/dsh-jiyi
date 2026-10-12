@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, tmpdir } from "./fixture.mjs";
 import * as path from "node:path";
 import { listEntries, remember } from "../lib/storage.js";
 import { matchTopic, registerMemoryTools, searchTopics, summarizeTopics } from "../lib/tools.js";
 
-const TEST_CWD = "/Users/ning/.dsh/jiyi-test-workspace";
+const TEST_CWD = "/fixture/jiyi-project";
 
 async function seededStore() {
   const root = await mkdtemp(path.join(tmpdir(), "jiyi-"));

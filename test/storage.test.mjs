@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, tmpdir } from "./fixture.mjs";
 import * as path from "node:path";
 import {
   classifyRelative,
@@ -20,7 +20,7 @@ import {
 } from "../lib/storage.js";
 import { MAX_MANIFEST_BYTES, MAX_NOTE_BYTES } from "../lib/parse.js";
 
-const TEST_CWD = "/Users/ning/.dsh/jiyi-test-workspace";
+const TEST_CWD = "/fixture/jiyi-project";
 import { slugify } from "../lib/parse.js";
 
 test("normalizeOrigin keeps host and full repo path", () => {

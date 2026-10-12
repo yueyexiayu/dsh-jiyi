@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { tmpdir } from "node:os";
 import { apply } from "../lib/index.js";
 import { ensureLayout, remember, loadSettings, listEntries } from "../lib/storage.js";
 
@@ -13,17 +12,18 @@ async function until(check) {
   throw new Error("condition did not settle");
 }
 async function fixture(fn, keys = false) {
-  const home = await fs.mkdtemp(path.join(tmpdir(), "jiyi-host-safe-"));
+  const home = await fs.mkdtemp("/tmp/jiyi-host-safe-");
   const prev = process.env.DSH_HOME;
   process.env.DSH_HOME = home;
   const session = { id: "s1", header: { cwd: home } };
   const agent = { session };
+  const agents = new Map([["s1", agent]]);
   const listeners = new Map();
   let handler;
   const ctx = {
     credentials: { resolve: async () => keys ? { value: "fixture-not-a-real-key" } : null },
     tools: { register() {} },
-    get: () => new Map([["s1", agent]]),
+    get: (name) => name === "agents" ? agents : undefined,
     on(name, fn) { const list = listeners.get(name) || []; list.push(fn); listeners.set(name, list); },
     connection: { fetch: { register(def) { handler = def.fetch; } } },
   };
@@ -35,10 +35,11 @@ async function fixture(fn, keys = false) {
   try {
     apply(ctx);
     await until(async () => (await status()).lastDream.at !== null);
-    await fn({ home, root: path.join(home, "jiyi"), call, status, emit, agent });
+    await fn({ home, root: path.join(home, "jiyi"), call, status, emit, agent, agents });
   } finally {
     await emit("dispose");
     if (prev === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prev;
+    await fs.rm(home, { recursive: true, force: true });
   }
 }
 
@@ -124,12 +125,72 @@ test("disable prevents a late extraction response from saving observations", { t
   } finally { release.resolve(); globalThis.fetch = originalFetch; }
 });
 
+test("injection failure and success remain isolated between sessions", async () => {
+  await fixture(async ({ home, root, emit, agent, agents, call, status }) => {
+    const { globalDir } = await ensureLayout(root, home, null);
+    await fs.writeFile(path.join(globalDir, "topics", "testing.md"), "# Testing\n\nUse just test.\n");
+    await fs.writeFile(path.join(root, "settings.json"), "{corrupt-fixture");
+    const pre = (current) => emit("agent/pre-step", { agent: current, step: 1, signal: new AbortController().signal }, async () => ({ kind: "enter", messages: [{ role: "user", content: "hi" }] }));
+    await pre(agent);
+    await fs.unlink(path.join(root, "settings.json"));
+    const other = { session: { id: "s2", header: { cwd: home } } }; agents.set("s2", other);
+    await pre(other);
+    const first = (await status()).lastInjection;
+    const second = (await (await call("status", { sessionId: "s2" })).json()).lastInjection;
+    assert.equal(first.status, "failed"); assert.equal(first.sessionId, "s1");
+    assert.equal(second.status, "injected"); assert.equal(second.sessionId, "s2");
+  });
+});
+
 test("parallel toggles each apply one atomic transition", async () => {
   await fixture(async ({ call, status }) => {
     const responses = await Promise.all([call("toggle"), call("toggle")]);
     assert.deepEqual(responses.map((r) => r.status), [200, 200]);
     assert.equal((await status()).enabled, true);
   });
+});
+
+test("plugin dispose waits for an admitted extraction even when fetch ignores abort", async () => {
+  const originalFetch = globalThis.fetch; const entered = deferred(), release = deferred();
+  globalThis.fetch = async () => { entered.resolve(); await release.promise; return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ outcome: "observations", observations: [{ type: "user", scope: "global", statement: "默认测试使用 just test" }] }) } }] }) }; };
+  try {
+    await fixture(async ({ emit, agent, status, root, home }) => {
+      await emit("agent/created", { agent });
+      await emit("session/event", agent.session, { type: "turn/start", data: { turn: 1 } });
+      await emit("session/event", agent.session, { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "默认测试使用 just test" }] } });
+      await emit("session/event", agent.session, { type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } });
+      await entered.promise; let disposed = false;
+      const disposal = emit("dispose").then(() => { disposed = true; });
+      await tick(); assert.equal(disposed, false);
+      release.resolve(); await disposal;
+      assert.equal((await status()).lastCapture.status, "cancelled");
+      assert.equal((await listEntries(root, home, null)).entries.length, 0);
+    }, true);
+  } finally { release.resolve(); globalThis.fetch = originalFetch; }
+});
+
+test("late completed-turn extraction cannot overwrite newer cancelled-turn status", async () => {
+  const originalFetch = globalThis.fetch;
+  const entered = deferred(), release = deferred();
+  globalThis.fetch = async () => {
+    entered.resolve(); await release.promise;
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ outcome: "noop" }) } }] }) };
+  };
+  try {
+    await fixture(async ({ emit, agent, status, call }) => {
+      await emit("agent/created", { agent });
+      await emit("session/event", agent.session, { type: "turn/start", data: { turn: 1 } });
+      await emit("session/event", agent.session, { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "默认测试使用 just test" }] } });
+      await emit("session/event", agent.session, { type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } });
+      await entered.promise;
+      await emit("session/event", agent.session, { type: "turn/start", data: { turn: 2 } });
+      await emit("session/event", agent.session, { type: "turn/end", data: { turn: 2, reason: { kind: "aborted", reason: { kind: "user" } } } });
+      release.resolve();
+      await until(async () => (await (await call("status", { sessionId: "" })).json()).lastCapture.status === "noop");
+      const capture = (await status()).lastCapture;
+      assert.equal(capture.turn, 2); assert.equal(capture.status, "cancelled");
+    }, true);
+  } finally { release.resolve(); globalThis.fetch = originalFetch; }
 });
 
 test("unexpected API errors do not expose exception contents", async () => {
