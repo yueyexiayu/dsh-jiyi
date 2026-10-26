@@ -1,24 +1,14 @@
 {
   "name": "jiyi",
-  "version": "0.1.4",
+  "version": "0.1.14",
   "private": true,
-  "description": "DSH desktop plugin: cross-session memory (topics, inbox, index injection).",
   "type": "module",
+  "description": "DSH native durable background memory and automatic scoped hybrid recall",
   "main": "lib/index.js",
-  "exports": {
-    ".": "./lib/index.js",
-    "./client": "./lib/client.js",
-    "./package.json": "./package.json"
-  },
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js" },
+  "scripts": { "test": "/usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs" },
   "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-sidebar-right"
-      ]
-    }
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-workspace"] }
   }
 }

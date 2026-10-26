@@ -1,27 +1,44 @@
-# jiyi
+# jiyi · DSH 跨会话记忆插件
 
-DeepSeek Harness 官方桌面端的跨会话记忆。右侧栏「开始」页增加 **记忆** 入口：Markdown topic、回合后观察、生成索引，在下一轮开始前注入模型。
+**版本：0.1.14** · MIT · DeepSeek Harness desktop plugin
 
-面向 **官方桌面**（`connection.fetch`），不依赖 `webServer`，也不走 `dsh plugin --profile desktop`。
+jiyi 在用户回合正常完成后后台提取明确事实，在新的相关输入到来时按项目范围检索，独立判断支持度，再补充原始记忆。右侧栏“记忆”提供查看、来源、纠正、删除、别名、失败队列和模型配置。
 
-## 做什么
+## 功能与边界
 
-- 右侧栏「记忆」浏览 global / 工作区 topic 与收件箱
-- 有新消息的出步前只读生成当前索引，内容变化才重新注入；首次空仓不注入，删除最后一个 topic 后发送旧索引失效通知；保留 DSH 的 `startsRequestSeries` 等决策字段
-- 模型用 `jiyi_list` / `jiyi_search` / `jiyi_read` 读记忆，不要用文件工具翻 `~/.dsh/jiyi`
-- 只在官方 `session/event` 的 `turn/end` **completed** 最终边界采集，等 `xuxie` 同轮续写结束后再抽取一次。aborted（用户取消或释放导致的中止）记录 cancelled，error 记录 failed，max-tokens 记录 skipped，不把未正常完成的回合当成成功提取。已 completed 的抽取持有独立工作区/会话快照，随后的 Agent 释放不会取消它；没有 completed 边界的释放不会触发抽取。工具摘要仍读取 v4 直接输出、`source.callId`、`isError` 和结构化失败原因，未返回结果标为 unresolved。
-- 摘要给回合状态和工具独立留出预算，先保留失败/未完成工具，再保留最近结果；长正文不会挤掉全部工具。输出注明展示和省略数量，不冒充完整日志。
-- 用模型池抽取：主模型 `glm-5.3-flash`，副模型 `deepseek-flash`。纯任务/提问不送抽取模型；混合请求中的「以后」「默认」等持久约定仍参与抽取，「记住：」可本地采集。结构无效、超限的结果进入后备模型而不是假 noop；敏感内容过滤单独记为 filtered，存储/抽取失败可见。
-- 索引提醒使用 v4 的 `plugin:jiyi` 消息来源；插件提醒、续写提醒和团队消息不会作为真实用户偏好采集。
-- 抽出后用同一模型池整理 topic。整理计划先完整校验，再以可恢复事务更新；失败保留输入。处理过的原始观察（包括 noop）归档，不直接销毁。LLM 返回 `processed`/`archived` 和 `coverage: unverified`，不冒称所有观察都已融入主题；规则逐条合并才计入 `merged`。
-- `/api/jiyi?action=status` 提供 `lastInjection`、`lastCapture`、`lastDream` 状态。带 sessionId 的 lastCapture 只显示该会话最新回合，lastInjection 只显示该会话的注入结果；旧回合迟到完成不能覆盖新回合 cancelled 状态，另一个会话注入成功不能掩盖本会话失败。不带 sessionId 的全局页保留最近实际工作状态。lastDream 表示跨工作区后台整理，而不是当前会话成功；UI 明确标注其范围和 cancelled/skipped 边界。后台失败可见，手动整理失败返回 `ok: false`。
-- 右侧栏冷历史工作区复用官方 `sessionController.inspect(sessionId, signal)`，不创建/恢复 Agent、推理或修改会话。未知会话 404，缺少绝对 cwd（含相对 cwd）400，服务缺失 503，历史损坏/读取失败 500；有 sessionId 的失败不会降级为全局记忆。没有 sessionId 才是显式全局浏览。
+- SQLite 持久化来源、版本、替代关系、FTS5、384维本地向量及后台队列。
+- 默认只检索全局与当前项目；明确引用其他项目时才扩展，歧义不自动合并。
+- 本地 MiniLM 产生候选，独立 LLM 判断原文是否支持实际问项。候选相似不等于允许注入。
+- 入选项严格校验原始 `id/version` 和逐字 `quote`，拒绝伪造、过期、重复或非法响应；超时与错误明确报告，不冒充“无相关记忆”。
+- 同义问句、明确否定约束及混合问题中的已知部分可构成支持。业务码不自动等于 HTTP 状态，表示约定不证明未记载的实现。
+- 自动流程不依赖主模型主动调用 `jiyi_search`；此工具是补充入口。关闭管理面板不停止 Host，停用插件才停止提取/召回。
+- 不自动导入全部历史，不把助手推测或记忆中的命令当作用户事实/指令。纠正和删除影响后续召回，不抹除既有聊天文本。
 
-文件在 `$DSH_HOME/jiyi/`（默认 `~/.dsh/jiyi/`），不写进用户仓库。同一 git origin 的 clone / worktree 共用工作区目录。
+## 环境
+
+本版本验证环境为 **macOS arm64、Node 24.21、Electron 44**，需要已安装 DeepSeek Harness 桌面端。依赖 DSH 的 `agent`、LLM、工具、存储和右侧栏 SDK，不是独立 Node 应用。完整测试包含安装包内 SDK，不能把缺少桌面环境的测试失败当作通过。
+
+本仓库是桌面文件系统插件：包名/Host/Client bundle id 均为 `jiyi`，入口是文件而非目录。保留 `private: true`，不通过 npm 发布。
 
 ## 安装
 
-复制到 `$DSH_HOME/plugins/jiyi`（默认 `$DSH_HOME` 为 `~/.dsh`），在 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 写入：
+先备份现有插件和记忆数据。以下示例使用默认 `DSH_HOME=$HOME/.dsh`；已有安装不要直接覆盖数据目录。
+
+```sh
+export DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+git clone https://github.com/yueyexiayu/dsh-jiyi.git "$DSH_HOME/plugins/jiyi"
+cd "$DSH_HOME/plugins/jiyi"
+
+# Node 24 / npm 需要在 PATH 中；使用 lockfile 安装当前平台依赖。
+npm ci --prefix deps
+
+# 显式联网安装固定 revision 的模型，逐文件校验字节数及 SHA256。
+node scripts/prepare-models.mjs
+```
+
+模型清单位于 [models/manifest.json](<models/manifest.json>)，运行库锁定 `@huggingface/transformers@3.8.1`。模型约129 MiB，其中 ONNX 单文件超过100 MiB，**不提交模型、node_modules或运行缓存**。安装脚本不使用 DSH 账号/凭据；已有资产仅校验，校验错误会中止，不默默换模型。运行时只读本地模型并禁止远程模型自动下载；LLM 调用仍需提供方网络和用户已有授权。
+
+在 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 中，将下面项目**合并到已有配置**，不要覆盖其他插件：
 
 ```yaml
 - insert:
@@ -29,37 +46,50 @@ DeepSeek Harness 官方桌面端的跨会话记忆。右侧栏「开始」页增
       name: ../../plugins/jiyi/lib/index.js
 ```
 
-完全退出 DeepSeek Harness（macOS：⌘Q）再打开，才能加载新的 Host/Client 代码。展开右侧栏，在「开始」里会出现 **记忆**。重启后已有会话在下一次有消息的出步前也会按当前索引检查注入；单纯刷新网页不保证更新 Host。
+相对路径以 desktop patch 自身所在目录为准。包内 [cordis.patch.yml](<cordis.patch.yml>) 是插件 bundle 声明，不要把它不加修改地覆盖 desktop profile。保持 profile 文件权限0600。
 
-## 说明
+**⌘Q 完全退出 DSH 后重新打开。** 在正常认证的应用菜单“在浏览器中打开”入口检查右栏“记忆”，确认 Client/Host 均0.1.14，再配置并分别验证提取、Embedding、相关性模型。保存设置不等于模型验证成功。不要分享包含认证信息的浏览器入口。
 
-- 面向官方桌面；不要用 `dsh plugin install` 往 desktop profile 塞依赖
-- 记忆文件在 `$DSH_HOME/jiyi/`，不进本仓库、也不写进用户项目
-- 仓库不含本机 patch、账号或凭据
+## 默认配置
 
-## 安全与恢复边界
+| 项目 | 默认值 |
+|---|---|
+| 提取 | `openai-codex/gpt-6.1-sol`，60000ms |
+| 相关性 | `openai-codex/gpt-6.1-sol`，10000ms，可在面板独立调整 |
+| Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2`，q8 CPU，384维 |
+| 候选/最终记忆 | 最多12 / 6条 |
+| 候选语义阈值 | `0.20`，不作为最终注入授权 |
+| 完整注入预算 | 4000 UTF-8字节 |
+| 状态陈旧时间 | 72小时，降权而非删除 |
 
-- 关闭会中止当前 Host 正在运行及排队中的抽取/整理，并等已接纳写操作停止后返回；插件 dispose 同样 abort 后等待 active 与排队的整理任务释放，不能先返回再后台收尾。设置更新原子串行，设置损坏报错而非自动开启。关闭不会撤销已经完成的写入。Agent disposed 则只释放注入/未完成事件缓存，不取消已经 completed 的抽取快照。
-- 不带 Git host 的旧工作区目录无法区分同名 GitHub/GitLab 仓库，因此不再自动归属第一个访问者；检测到后明确报迁移错误，读写均不返回假空或擅自搬动。需先确认原仓库 origin，再将旧目录显式迁到正确目标；本次修复没有迁移用户真实数据。
-- list/read/search 与索引快照不再创建目录、改写索引或清空 archive；不可读主题令搜索明确失败，不用空结果掩盖错误。
-- 拒绝 store/scope/子目录/文件的符号链接，文件原子替换避免跟随既有 topic 链接；锁有所有者标识，活进程不会仅因超过两分钟被抢锁。不能把这些检查视为对同权限恶意进程不断交换目录的完整隔离。
-- 观察文件用随机唯一标识，不再因同一秒、同一标题覆盖不同正文。整理按最多 10 条一批调用模型，不足 10 条也会清掉，不凑批、也不只在启动时扫一批就停。有待整理时会继续下一批，直到该范围收件箱清空或这一轮失败。失败最多再试 5 次，间隔 60 秒；模型调用期间新写入的观察留到下一批，不让这一批作废。单次输入仍限 64K 字符。已有 topic 上下文超预算则明确失败，不静默截断旧事实。
-- 每个 scope 的 `archive/` 保留原观察和 `transaction-*.json` before-image。未完成事务使用 `.dream-transaction.json`，下次整理先回滚恢复。已完成事务的历史恢复目前需人工选择原观察或 before-image，没有恢复按钮。归档不自动删除，磁盘保留策略由用户管理。
-- 索引采用 JSON 引用并声明不可信历史数据；工具/助手来源不能单独建立全局偏好。提示边界与来源约束降低注入风险，但不保证模型语义判断始终正确。
-- 测试使用临时记忆根目录和模拟网络；不需要真实密钥。真实模型服务、真实历史数据迁移以及桌面重启后生效需单独验收。
+数据与设置位于 `$DSH_HOME/storages/jiyi/`，不在 Git 仓库中。目录/文件采用0700/0600权限；不要提交数据库、WAL、账号记录、会话原文或原始评测输出。API 路径为 `/api/jiyi`，只通过 DSH 正常认证入口访问；凭据保留在 Host。
 
-## 开发
+冷加载默认上限120秒，推理/召回默认10秒；Embedding 最多2个隔离子进程，过载、取消、超时和释放失败明确报告。LLM token 预算是否在服务端实施取决于提供方 adapter，不能将本地预算意图当作服务端硬限制。
 
-```bash
-for file in lib/*.js; do /usr/local/bin/node --check "$file" || exit; done
-TMPDIR=/tmp /usr/local/bin/node --test test/*.test.mjs
-# 只读官方解包参考，可启用真实 Controller/Query/Store 检查，不启动 Host：
-TMPDIR=/tmp DSH_OFFICIAL_ROOT=/absolute/read-only/dsh \
-  /usr/local/bin/node --test test/official-history.test.mjs
+## 测试
+
+先安装依赖和模型，并确保 macOS 的 `/Applications/DeepSeek Harness.app` 与 `/usr/local/bin/node` 可用。测试使用独立临时 SQLite、合成来源和受控 LLM；本地 Embedding 与安装包 SDK 实际执行，不需要云端账号，不操作正式记忆。
+
+```sh
+NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs
+ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
+  '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness' \
+  --test --test-timeout=90000 test/*.test.mjs
+for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
 ```
 
-2026-10-12 实测：bianji + jiyi 全套 **245/245 通过，0 跳过**，包括 **21 项官方类集成**和 **3 项真实 Chrome 隔离 DOM 测试**。该全量结果启用了官方只读 runtime 和已有 Playwright/React18 UMD 路径；未配置这些 fixture 的默认测试会明确跳过相应项，不能算全量通过。历史/生命周期首批 13 项回归修复前全部失败，修复后通过；补测 completed 后释放、用户/释放取消、max-tokens/error、迟到旧回合状态、A/B 注入隔离、live header 异常、cold/live 相对 cwd 拒绝、dispose 等待不遵循 abort 的迟响应。
+公开测试夹具独立于本机数据；不发布私人会话、实际项目路径或原始评测记录。`evidence/` 仅保留空目录占位，运行输出被 Git 忽略。真实模型效果不能由受控 fixture 冒充；内部相关性规则版本为 `jiyi-relevance-v7`，提取器为v4。
 
-官方历史测试真实构造 `SessionController`、`SessionQueryEngine`、`SessionStore` 和 projection，只有持久化 I/O、Agent 激活端点及未使用的 transport 服务是 fixture；cold status 的 Agent 激活/会话事件修改/遗留读取 handle 均为 0。浏览器运行的是本轮 Client 文件和模拟 API，验证 cancelled/skipped、注入失败、全局整理范围以及卸载；不代表已重启的真实桌面会话验收。
+0.1.14 发布前的指定本机验收：Q13首次五次5/5，固定36题两轮36/36，未将旧正确应注入项变空。该有限样本不代表任意查询永久可靠；原始数据因隐私不在公开仓库。本机召回p50约1.43–1.45秒，较此前1.18–1.23秒增加，不宣称性能优化。
 
-Host fixture 显式设置 /tmp 的 DSH_HOME，storage/dream/tools fixture 也只允许 /tmp/jiyi-*，并提供临时默认 DSH_HOME 防止测试落到真实记忆。dispose 等后台停止后再清理所有新 fixture 目录；测试用网络模拟和外部测试 guard，不读取或写入真实记忆、账号或会话，也不调用真实模型。本轮未更改公共配置/官方代码，未启动、恢复、切换历史 Agent，未重启应用。
+## 更新、迁移和卸载
+
+更新前备份插件、settings及SQLite（运行中数据库应使用 SQLite backup API 或安全一致性备份）。新安装直接生成当前结构；从旧的 topics/inbox 架构迁移不可仅凭版本号假定无损。项目别名补登使用 [scripts/migrate-aliases.mjs](<scripts/migrate-aliases.mjs>) 的显式流程，先审阅计划及备份，不静默重写正式记忆。
+
+卸载时先从 desktop patch 中移除 **jiyi 对应项**，再完全退出/重开 DSH。数据目录需用户另行决定保留或删除，不要为卸载清空整个 profile。
+
+## 仓库规范与许可
+
+本仓库公开，GitHub Topic 为 **`dsh-plugin`**，并填写 description，供 DSH 社区目录发现；不代表官方自动安装或已通过社区人工审核。没有自动提交自荐 PR。
+
+源码沿用 [MIT License](<LICENSE>)。模型为独立的 Apache-2.0 资产，来源、固定revision及校验和见模型清单；第三方依赖沿用各自许可。
