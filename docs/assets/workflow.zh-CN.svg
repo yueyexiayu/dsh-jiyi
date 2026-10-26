@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="410" viewBox="0 0 1120 410" role="img" aria-labelledby="title desc">
+<title id="title">jiyi 的提取与召回工作流</title><desc id="desc">示意图，不是运行截图。正常用户回合结束后提取明确事实并存入本机；新输入触发限定范围的候选检索、独立支持度判断和原文引用。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="m1 1 5 3-5 3" fill="none" stroke="#79a999" stroke-width="1.5"/></marker></defs>
+<rect x=".5" y=".5" width="1119" height="409" rx="20" fill="#f5faf7" stroke="#dcebe4"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<text x="40" y="48" font-size="27" font-weight="650" fill="#173c35">每一条记忆，都有来源与边界</text>
+<text x="40" y="78" font-size="15" fill="#658076">先保存明确事实，再判断当下是否有用。</text><text x="1080" y="47" text-anchor="end" font-size="12" fill="#7e948b">工作流示意 · 非运行截图</text>
+<text x="40" y="118" font-size="13" font-weight="600" fill="#377760">01 / 后台提取 · 用户回合正常完成后</text>
+<g stroke="#79a999" fill="none" stroke-width="1.7" marker-end="url(#arrow)"><path d="M326 166h83"/><path d="M706 166h83"/></g>
+<path d="M940 200v29H426v48" fill="none" stroke="#b1cbbf" stroke-width="1.4" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+<g>
+<rect x="40" y="132" width="280" height="68" rx="13" fill="#fff" stroke="#d4e4db"/><text x="60" y="160" font-size="18" font-weight="600" fill="#254b3d">用户原始证据</text><text x="60" y="183" font-size="13" fill="#71857a">明确事实，而非助手推测</text>
+<rect x="420" y="132" width="280" height="68" rx="13" fill="#f3f0fd" stroke="#dad4ed"/><text x="440" y="160" font-size="18" font-weight="600" fill="#514978">后台提取</text><text x="440" y="183" font-size="13" fill="#79718f">提供方 LLM · 有界任务队列</text><text x="677" y="158" text-anchor="end" font-size="10" font-weight="600" fill="#9385b2">LLM</text>
+<rect x="800" y="132" width="280" height="68" rx="13" fill="#e7f4ed" stroke="#b9d9c9"/><text x="820" y="160" font-size="18" font-weight="600" fill="#254b3d">本机持久化记忆</text><text x="820" y="183" font-size="13" fill="#648374">SQLite · 来源 · 版本 · 384维向量</text>
+</g>
+<text x="40" y="258" font-size="13" font-weight="600" fill="#377760">02 / 自动召回 · 新的用户输入到来时</text>
+<g stroke="#79a999" fill="none" stroke-width="1.7" marker-end="url(#arrow)"><path d="M280 317h18"/><path d="M549 317h18"/><path d="M818 317h18"/></g>
+<g>
+<rect x="40" y="283" width="234" height="68" rx="13" fill="#fff" stroke="#d4e4db"/><text x="58" y="311" font-size="18" font-weight="600" fill="#254b3d">新的用户输入</text><text x="58" y="334" font-size="13" fill="#71857a">不在打开会话时预载事实</text>
+<rect x="309" y="283" width="234" height="68" rx="13" fill="#fff" stroke="#d4e4db"/><text x="327" y="311" font-size="18" font-weight="600" fill="#254b3d">限定范围的候选</text><text x="327" y="334" font-size="13" fill="#71857a">FTS5 + 本地 MiniLM</text>
+<rect x="578" y="283" width="234" height="68" rx="13" fill="#f3f0fd" stroke="#dad4ed"/><text x="596" y="311" font-size="18" font-weight="600" fill="#514978">独立支持度判断</text><text x="596" y="334" font-size="13" fill="#79718f">校验 id / version / quote</text>
+<rect x="847" y="283" width="234" height="68" rx="13" fill="#e7f4ed" stroke="#b9d9c9"/><text x="865" y="311" font-size="18" font-weight="600" fill="#254b3d">原文引用注入</text><text x="865" y="334" font-size="13" fill="#648374">保留来源，不补写未记录细节</text>
+</g>
+<text x="40" y="386" font-size="13" fill="#6b8377">本地：存储与 Embedding　·　提供方网络：提取与相关性 LLM　·　候选相似 ≠ 允许注入</text>
+</g></svg>

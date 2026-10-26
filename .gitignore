@@ -3,6 +3,12 @@
 !/.gitignore
 !/LICENSE
 !/README.md
+!/README.en.md
+!/docs/
+/docs/*
+!/docs/assets/
+/docs/assets/*
+!/docs/assets/*.svg
 !/package.json
 !/cordis.patch.yml
 !/lib/
