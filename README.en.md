@@ -4,7 +4,7 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.15</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.16</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
@@ -78,23 +78,30 @@ The installer explicitly downloads a **pinned revision** and verifies every file
 
 Resource definitions: [model manifest](<models/manifest.json>) · [dependency lockfile](<deps/package-lock.json>) · [installer](<scripts/prepare-models.mjs>)
 
-### 2. Register the desktop plugin
+### 2. Register as a desktop profile bundle
 
-**Merge the following entry into the existing configuration** at `$DSH_HOME/profiles/desktop/cordis.patch.yml`. Do not replace other plugins:
+jiyi loads as a **desktop profile bundle**. Do not add a `cordis.patch.yml` `- insert:` for it; insert is obsolete and must not be used on this machine. Do not both bundle and insert the same id.
 
-```yaml
-- insert:
-    - id: jiyi
-      name: ../../plugins/jiyi/lib/index.js
+Add `jiyi` in **both** places in `$DSH_HOME/profiles/desktop/package.json`:
+
+- `dependencies`: `"jiyi": "link:$DSH_HOME/plugins/jiyi"`
+- `dsh.profile.bundles`: the string `"jiyi"`, matching the package name
+
+Then install dependencies in that profile and confirm `node_modules/jiyi` resolves to the plugin:
+
+```sh
+cd "$DSH_HOME/profiles/desktop"
+npm install
+node -e "console.log(require.resolve('jiyi'))"
 ```
 
-Relative paths resolve from the desktop patch's directory. Keep that profile file at mode 0600. The package's [bundle declaration](<cordis.patch.yml>) uses a different relative path; do not copy it unchanged over the desktop profile.
+Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configuration, use an overlay line for that id only. Do not copy the package [bundle declaration](<cordis.patch.yml>) unchanged over the desktop profile.
 
 ### 3. Restart and verify
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.15**.
+- Confirm **Client / Host both report 0.1.16**.
 - Configure and separately verify extraction, embedding and relevance models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
@@ -102,8 +109,8 @@ Relative paths resolve from the desktop patch's directory. Keep that profile fil
 
 | Setting | Default | Purpose |
 | :--- | :--- | :--- |
-| Extraction model | `openai-codex/gpt-6.1-sol` · 60000ms | Extract facts from explicit user evidence |
-| Relevance model | `openai-codex/gpt-6.1-sol` · 10000ms | Independently check candidate support |
+| Extraction model | `deepseek-account/deepseek-flash` · 60000ms | Extract facts from explicit user evidence |
+| Relevance model | `deepseek-account/deepseek-flash` · 10000ms | Independently check candidate support |
 | Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | q8 CPU · 384 dimensions · local |
 | Candidates / final memories | At most 12 / 6 | Bound judgment and injection counts |
 | Semantic candidate threshold | `0.20` | Candidate generation only, not injection authorization |
@@ -130,7 +137,7 @@ Relative paths resolve from the desktop patch's directory. Keep that profile fil
 | Fixed sample · Q13 | **First 5 / 5** | The specified local pre-publication evaluation |
 | Fixed sample · 36 cases | **36 / 36 × 2 rounds** | No previously correct positive became empty; not a universal guarantee |
 
-> The fixed-sample evaluation used `deepseek-account/deepseek-flash`, not the default configuration. Private raw data is not published. Controlled regression tests do not replace real semantic evaluation or establish reliability for every model and future request.
+> The fixed-sample evaluation also used `deepseek-account/deepseek-flash`. Private raw data is not published. Controlled regression tests do not replace real semantic evaluation or establish reliability for every model and future request.
 >
 > Local recall p50 was approximately **1.43–1.45 seconds**, versus 1.18–1.23 seconds previously. The accuracy fix is not a performance-improvement claim.
 
@@ -162,7 +169,7 @@ No. Automatic recall is the normal path; `jiyi_search` is an explicit supplement
 **How do updates, migrations and removal work?**<br/>
 Back up the plugin and settings before updating. For a running SQLite database, use the backup API or a safe consistent backup. Do not assume a lossless migration from the old topics/inbox architecture merely because of the version number. Alias backfills use the [explicit migration script](<scripts/migrate-aliases.mjs>); inspect its plan and back up before applying it. Production memory is not silently rewritten.
 
-To remove jiyi, remove **only its entry** from the desktop patch, then fully quit and reopen DSH. Retaining or deleting memory data is the user's choice; do not clear the entire profile.
+To remove jiyi, drop it from desktop `package.json` `dependencies` and `dsh.profile.bundles`, delete the unused `node_modules/jiyi` link, and remove any desktop-patch config overlay for that id. Do not empty the whole patch. Then fully quit and reopen DSH. Retaining or deleting memory data is the user's choice.
 
 ## Community and license
 

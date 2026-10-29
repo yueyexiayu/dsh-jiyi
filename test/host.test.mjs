@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { apply, validateSettings, recallMessage } from '../lib/index.js';
+import { apply, validateSettings, recallMessage, VERSION, DEFAULT_SETTINGS } from '../lib/index.js';
 import { parseExtraction, userSource, eligibleSession } from '../lib/extract.js';
 const installedTools = process.versions.electron ? await import('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js') : null;
 const installedLlm = process.versions.electron ? await import('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js') : null;
@@ -31,9 +31,51 @@ test('extraction accepts only supported exact user evidence and rejects guessed 
   assert.equal(eligibleSession({origin:'subagent'}),false);
 });
 test('settings keep failures explicit and reject invalid operational limits',()=>{
+  assert.equal(VERSION, JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).version);
+  assert.notEqual(VERSION, '0.1.14');
+  assert.notEqual(VERSION, '0.1.15');
+  assert.equal(DEFAULT_SETTINGS.extraction.provider, 'deepseek-account');
+  assert.equal(DEFAULT_SETTINGS.extraction.model, 'deepseek-flash');
+  assert.equal(DEFAULT_SETTINGS.relevance.provider, 'deepseek-account');
+  assert.equal(DEFAULT_SETTINGS.relevance.model, 'deepseek-flash');
   assert.equal(validateSettings({extraction:{provider:null,model:null}}).extraction.provider,null);
   assert.throws(()=>validateSettings({retrieval:{timeoutMs:0}}),/timeoutMs/);
   assert.throws(()=>validateSettings({enabled:'yes'}),/boolean/);
+});
+test('corrupt or missing settings.json does not kill apply; bad bytes stay until a valid save', async () => {
+  const missing = await fixture();
+  try {
+    const state = await missing.state();
+    assert.equal(state.version, VERSION);
+    assert.equal(state.settingsError, null);
+    assert.equal(state.settings.extraction.provider, 'deepseek-account');
+    assert.equal(state.settings.extraction.model, 'deepseek-flash');
+    assert.ok(existsSync(state.paths.settings));
+    const saved = await missing.request('settings', { settings: state.settings });
+    assert.equal(saved.ok, true);
+    assert.equal((await missing.state()).settingsError, null);
+  } finally { await missing.cleanup(); }
+
+  for (const [label, raw] of [['invalid-json', '{not-json'], ['invalid-settings', JSON.stringify({ enabled: 'yes' })]]) {
+    const dir = mkdtempSync(join(tmpdir(), `jiyi-settings-${label}-`));
+    writeFileSync(join(dir, 'settings.json'), raw, { mode: 0o600 });
+    const f = await fixture({ dataDir: dir });
+    try {
+      const state = await f.state();
+      assert.match(state.settingsError, /设置文件无法加载/);
+      assert.equal(readFileSync(join(dir, 'settings.json'), 'utf8'), raw);
+      const failed = await f.request('settings', { settings: { enabled: 'yes' } });
+      assert.equal(failed.ok, false);
+      assert.equal(readFileSync(join(dir, 'settings.json'), 'utf8'), raw);
+      assert.match((await f.state()).settingsError, /设置文件无法加载/);
+      const saved = await f.request('settings', { settings: state.settings });
+      assert.equal(saved.ok, true);
+      assert.equal((await f.state()).settingsError, null);
+      const persisted = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
+      assert.equal(persisted.extraction.provider, 'deepseek-account');
+      assert.equal(persisted.extraction.model, 'deepseek-flash');
+    } finally { await f.cleanup(); }
+  }
 });
 test('recall messages are plugin user-role reference data, never fabricated tool results',()=>{
   const msg=recallMessage([{id:'m',version:1,scope:'global',updatedAt:'now',content:'中文',sources:[source]}],'r',x=>({...x,role:'user',id:'fresh'}),[]);
@@ -243,7 +285,7 @@ test('Host keeps relevance failure explicit and retries only for a new genuine u
     const decision={kind:'enter',messages:[{id:'relevance-failure-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'请用汉语作答'}]}]};
     assert.equal(await pre({agent,signal},async()=>decision),decision,'Failed relevance must preserve the original message list');
     const failed=await f.state();
-    assert.equal(failed.version,'0.1.14');
+    assert.equal(failed.version,VERSION);
     assert.equal(failed.retrievals[0].status,'error');
     assert.match(failed.retrievals[0].error,/TEST_RELEVANCE_FAILURE/);
     assert.deepEqual(failed.retrievals[0].memoryIds,[]);
@@ -345,7 +387,7 @@ for(const transport of ['ipc','cli']) for(const liveEvents of [false,true]) test
       try {production.putMemory({id:'live-recall-preference',scope:'global',content:'用户长期偏好使用简体中文回答',sources:[source]});} finally {production.close();}
     }
     const endpoint=JSON.parse(readFileSync(join(state.paths.dataDir,'eval-endpoint.json'),'utf8'));
-    assert.equal((await exchange(endpoint.socketPath,{op:'status'})).version,'0.1.14');
+    assert.equal((await exchange(endpoint.socketPath,{op:'status'})).version,VERSION);
     const before=databaseSnapshot(state.paths.database);let entered=false;
     f.setJudge(async payload=>{if(payload.candidates.some(c=>c.id===memory.id)){entered=true;await gate.promise;}return payload.candidates.map(({id,version})=>({id,version}));});
     if(transport==='cli') {
@@ -355,7 +397,7 @@ for(const transport of ['ipc','cli']) for(const liveEvents of [false,true]) test
           try {resolve({...JSON.parse(stdout),cliExit:error?.code??0,cliStderr:stderr});}catch(e){reject(new Error(`${e.message}: ${stderr}`));}
         });
       });
-    } else pending=exchange(endpoint.socketPath,{op:'run',version:'0.1.14',inputPath,caseIds:[1]});
+    } else pending=exchange(endpoint.socketPath,{op:'run',version:VERSION,inputPath,caseIds:[1]});
     await until(()=>entered);
     const renamed=await f.request('project',{id:memory.projectId,name:'并行正式管理',aliases:[]});
     assert.equal(renamed.ok,true,'management remains available during evaluation');

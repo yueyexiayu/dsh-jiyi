@@ -24,9 +24,10 @@ if (!process.versions.electron) {
     assert.equal(child.status, 0, `Installed SDK execution regression failed:\n${child.stdout}\n${child.stderr}`);
   });
 } else {
-  const [{ Context }, { ToolRuntime }, llm, { apply, validateSettings }, { MemoryStore }] = await Promise.all([
+  const [{ Context }, { ToolRuntime }, { NativeToolExecutor }, llm, { apply, validateSettings }, { MemoryStore }] = await Promise.all([
     import(sdkBase + 'cordis/lib/index.js'),
     import(sdkBase + 'dsh-tools/lib/index.js'),
+    import(sdkBase + 'dsh-tool-executor-native/lib/index.js'),
     import(sdkBase + 'dsh-llm/lib/index.js'),
     import('../lib/index.js'),
     import('../lib/store.js'),
@@ -45,8 +46,9 @@ if (!process.versions.electron) {
       } finally { store.close(); }
     }
     const context = new Context();
-    const releasePrompt = context.reflect.provide('systemPrompt', { tools: () => () => {} });
+    const releasePrompt = context.reflect.provide('systemPrompt', { tools: () => () => {}, section: () => () => {} });
     const runtime = new ToolRuntime(context);
+    runtime.setExecutor(new NativeToolExecutor(context));
     const disposers = [];
     const session = { id: 'isolated-tool-session', header: { cwd: join(dir, 'workspace'), origin: 'user' } };
     const agent = { session };
@@ -75,7 +77,15 @@ if (!process.versions.electron) {
     return {
       runtime, cleanup,
       assertNoModelCalls() { assert.equal(forbiddenCalls, 0); },
-      execute() { return runtime.execute({ name: 'jiyi_search', callId: 'isolated-runtime-call', agent, arguments: { query: '中文偏好', scope: 'global' }, signal: new AbortController().signal }); },
+      async execute() {
+        const batch = await runtime.execute({
+          calls: [{ id: 'isolated-runtime-call', name: 'jiyi_search', arguments: JSON.stringify({ query: '中文偏好', scope: 'global' }) }],
+          agent,
+          signal: new AbortController().signal,
+        });
+        assert.equal(batch.results.length, 1, JSON.stringify(batch));
+        return batch.results[0].result;
+      },
     };
   }
 

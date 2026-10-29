@@ -4,7 +4,7 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.15</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.16</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
@@ -78,23 +78,30 @@ node scripts/prepare-models.mjs
 
 资源定义：[模型清单](<models/manifest.json>) · [依赖锁定](<deps/package-lock.json>) · [安装脚本](<scripts/prepare-models.mjs>)
 
-### 2. 挂载桌面插件
+### 2. 挂载为 desktop profile bundle
 
-在 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 中，**合并下面的项目，不要覆盖已有配置**：
+jiyi 作为 **desktop profile bundle** 加载。不要再用 `cordis.patch.yml` 的 `- insert:`；`insert` 已过时，本机不要用。同一 id 不要既做 bundle 又再 insert。
 
-```yaml
-- insert:
-    - id: jiyi
-      name: ../../plugins/jiyi/lib/index.js
+在 `$DSH_HOME/profiles/desktop/package.json` **两处**都加上 `jiyi`：
+
+- `dependencies`：`"jiyi": "link:$DSH_HOME/plugins/jiyi"`
+- `dsh.profile.bundles`：字符串 `"jiyi"`，与包名相同
+
+然后在该 profile 目录安装依赖，并确认 `node_modules/jiyi` 能解析到插件：
+
+```sh
+cd "$DSH_HOME/profiles/desktop"
+npm install
+node -e "console.log(require.resolve('jiyi'))"
 ```
 
-相对路径以 desktop patch 自身的目录为准。保持该 profile 文件权限0600。包内 [bundle 声明](<cordis.patch.yml>) 使用不同的相对路径，不要原样覆盖 desktop profile。
+不要再在 desktop `cordis.patch.yml` 里 `- insert:` 同一 id。需要改配置时只用对该 id 的 config 覆盖行。包内 [bundle 声明](<cordis.patch.yml>) 不要原样覆盖 desktop profile。
 
 ### 3. 重启并验证
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为0.1.15**。
+- 确认 **Client / Host 均为0.1.16**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
@@ -102,8 +109,8 @@ node scripts/prepare-models.mjs
 
 | 设置 | 默认值 | 用途 |
 | :--- | :--- | :--- |
-| 提取模型 | `openai-codex/gpt-6.1-sol` · 60000ms | 从明确用户证据中提取事实 |
-| 相关性模型 | `openai-codex/gpt-6.1-sol` · 10000ms | 独立判断候选对问项的支持度 |
+| 提取模型 | `deepseek-account/deepseek-flash` · 60000ms | 从明确用户证据中提取事实 |
+| 相关性模型 | `deepseek-account/deepseek-flash` · 10000ms | 独立判断候选对问项的支持度 |
 | Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | q8 CPU · 384维 · 本地运行 |
 | 候选 / 最终记忆 | 最多12 / 6条 | 限制进入判别和注入的条数 |
 | 候选语义阈值 | `0.20` | 只选候选，不授权注入 |
@@ -130,7 +137,7 @@ node scripts/prepare-models.mjs
 | 固定样本 · Q13 | **首次5 / 5** | 发布前的指定本机实测 |
 | 固定样本 · 36题 | **36 / 36 × 2轮** | 未将旧正确应注入项变空；不是全场景保证 |
 
-> 固定样本实测使用 `deepseek-account/deepseek-flash`，与默认配置不同；私人原始数据不公开。受控回归测试不代替真实语义验证，也不代表所有模型或未来请求都同样可靠。
+> 固定样本实测也使用 `deepseek-account/deepseek-flash`；私人原始数据不公开。受控回归测试不代替真实语义验证，也不代表所有模型或未来请求都同样可靠。
 >
 > 本机召回p50约 **1.43–1.45秒**，此前为1.18–1.23秒；准确性修复不等于性能提升。
 
@@ -162,7 +169,7 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 **更新、迁移和卸载怎么做？**<br/>
 更新前备份插件与设置；运行中的 SQLite 使用 backup API 或安全一致性备份。从旧 topics/inbox 架构迁移，不可仅凭版本号假定无损。别名补登走 [显式迁移脚本](<scripts/migrate-aliases.mjs>)，先审阅计划和备份，不静默重写正式记忆。
 
-卸载时只移除 desktop patch 中的 **jiyi 对应项**，再完全退出/重开 DSH。记忆数据是否保留由用户决定，不要清空整个 profile。
+卸载时从 desktop `package.json` 的 `dependencies` 和 `dsh.profile.bundles` 去掉 `jiyi`，删除已无用途的 `node_modules/jiyi` 链接，并去掉 desktop patch 里对该 id 的 config 覆盖（若有）。不要清空整个 patch。然后完全退出/重开 DSH。记忆数据是否保留由用户决定。
 
 ## 社区与许可
 

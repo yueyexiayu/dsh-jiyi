@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { auditEvaluationReturn } from '../lib/eval-integrity.js';
 
-const VERSION='0.1.14';
+const VERSION='0.1.16';
 const help=`jiyi ${VERSION} 隔离副本批量评测（必须先重启加载同版本 Host）
 仅查询状态：node scripts/evaluate.mjs --status
 显式运行：node scripts/evaluate.mjs --run --input evidence/manual-eval-v018-flash-20261025.json

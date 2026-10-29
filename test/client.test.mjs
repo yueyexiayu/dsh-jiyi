@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
+import { VERSION } from '../lib/index.js';
 
 const code = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8');
+const versionRe = VERSION.replaceAll('.', '\\.');
 const memory = { id: 'm1', content: '偏好中文 <script>不会执行</script>', scope: 'project', projectId: 'p1', type: 'preference', status: 'active', version: 2, createdAt: '2026-10-20T01:02:00Z', updatedAt: '2026-10-21T01:02:00Z', extractionModel: 'extract-test', embeddingModel: 'embed-test', embeddingVersion: 3, sources: [{ sessionId: 'origin-session', eventSeq: 42, quote: '用户明确表达的原话' }] };
 function state(overrides = {}) {
-  return { ok: true, version: '0.1.14', settings: { enabled: true, extraction: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 60000 }, embedding: { backend: 'local', model: 'local-test' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 10000 }, retrieval: { timeoutMs: 10000, maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72 }, queue: { maxAttempts: 3 } }, memories: [memory], projects: [{ id: 'p1', name: '测试项目' }], queue: [{ id: 'q1', sessionId: 's1', eventSeq: 9, status: 'failed', attempts: 2, error: '实际提取失败', updatedAt: '2026-10-21T00:00:00Z' }], retrievals: [{ sessionId: 's1', messageId: 'msg-1', status: 'timeout', query: '当前问题', memoryIds: [], error: '实际召回超时', createdAt: '2026-10-21T00:00:00Z' }, { sessionId: 'other', messageId: 'other-msg', status: 'hit', query: '其他会话不展示', memoryIds: ['m1'] }], models: { extraction: { status: 'not-verified' }, embedding: { status: 'not-verified' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', version: 'relevance-test-v1', status: 'not-verified', ready: false, activeRequests: 0, lastSuccessAt: null, error: null } }, ...overrides };
+  return { ok: true, version: VERSION, settings: { enabled: true, extraction: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 60000 }, embedding: { backend: 'local', model: 'local-test' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 10000 }, retrieval: { timeoutMs: 10000, maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72 }, queue: { maxAttempts: 3 } }, memories: [memory], projects: [{ id: 'p1', name: '测试项目' }], queue: [{ id: 'q1', sessionId: 's1', eventSeq: 9, status: 'failed', attempts: 2, error: '实际提取失败', updatedAt: '2026-10-21T00:00:00Z' }], retrievals: [{ sessionId: 's1', messageId: 'msg-1', status: 'timeout', query: '当前问题', memoryIds: [], error: '实际召回超时', createdAt: '2026-10-21T00:00:00Z' }, { sessionId: 'other', messageId: 'other-msg', status: 'hit', query: '其他会话不展示', memoryIds: ['m1'] }], models: { extraction: { status: 'not-verified' }, embedding: { status: 'not-verified' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', version: 'relevance-test-v1', status: 'not-verified', ready: false, activeRequests: 0, lastSuccessAt: null, error: null } }, ...overrides };
 }
 function legacyState(version = '0.1.2') {
   const value = state({ version });
@@ -57,7 +59,7 @@ test('registers isolated keyed jiyi tab and reads only declared services', async
   assert.deepEqual(Array.from(app.plugin.inject), ['slots', 'sidebarRightTabs', 'uiWorkspace']);
   assert.equal(app.registrations[0].id, 'jiyi'); assert.equal(app.registrations[0].kind, 'jiyi');
   assert.deepEqual(app.registrations.slice(1).map(x => [x.name, x.key]), [['sidebar.right.pane.tab', 'jiyi'], ['sidebar.right.pane.tab.title', 'jiyi']]);
-  assert.match(app.text(), /v0\.1\.14/); assert.match(app.text(), /extract-test/); assert.match(app.text(), /embed-test/); assert.match(app.text(), /seq 42/); assert.match(app.text(), /用户明确表达的原话/);
+  assert.match(app.text(), new RegExp('v' + versionRe)); assert.match(app.text(), /extract-test/); assert.match(app.text(), /embed-test/); assert.match(app.text(), /seq 42/); assert.match(app.text(), /用户明确表达的原话/);
   assert.doesNotMatch(app.text(), /其他会话不展示/); assert.equal(app.all().some(n => n.type === 'script'), false);
   app.destroy();
 });
@@ -65,7 +67,7 @@ test('registers isolated keyed jiyi tab and reads only declared services', async
 test('a newer Client safely renders older Hosts with absent relevance fields and blocks all runtime actions', async () => {
   for (const version of ['0.1.0', '0.1.2']) {
     const app = harness(() => legacyState(version)); await app.settle();
-    assert.match(app.text(), new RegExp('Client v0\\.1\\.14 / Host v' + version.replaceAll('.', '\\.')));
+    assert.match(app.text(), new RegExp('Client v' + versionRe + ' / Host v' + version.replaceAll('.', '\\.')));
     assert.match(app.text(), /不一致.*完全重启/); assert.match(app.text(), /相关性状态：Host 未提供（未验证）/);
     for (const label of ['保存设置', '真实验证提取', '真实验证 Embedding', '真实验证相关性', '纠正', '删除', '重试提取', '检索']) assert.equal(app.find(label).props.disabled, true, label);
     // Even direct handler dispatch must not bypass disabled controls.
@@ -78,7 +80,7 @@ test('a newer Client safely renders older Hosts with absent relevance fields and
 
 test('new Client refuses mutations against a fully capable but still loaded 0.1.6 Host', async () => {
   const app = harness(() => state({ version: '0.1.6' })); await app.settle();
-  assert.match(app.text(), /Client v0\.1\.14 \/ Host v0\.1\.6/);
+  assert.match(app.text(), new RegExp('Client v' + versionRe + ' / Host v0\\.1\\.6'));
   assert.match(app.text(), /不一致.*完全重启/);
   for (const label of ['保存设置', '真实验证提取', '真实验证 Embedding', '真实验证相关性', '纠正', '删除', '重试提取', '检索']) assert.equal(app.find(label).props.disabled, true, label);
   await app.find('真实验证相关性').props.onClick(); await app.find('保存设置').props.onClick(); await app.submit();
@@ -143,7 +145,10 @@ test('search sends session and filters, exposes timeout, and range filter works 
   await app.change('记忆范围', 'global'); assert.match(app.text(), /显示 0 条/);
   await app.change('记忆范围', 'p1'); await app.change('搜索记忆', '中文'); await app.submit();
   const call = app.calls.find(c => c.op === 'search'); assert.equal(call.url.searchParams.get('sessionId'), 's1'); assert.equal(call.url.searchParams.get('scope'), 'p1'); assert.equal(call.url.searchParams.get('query'), '中文');
-  assert.match(app.text(), /检索状态：timeout · embedding timed out/); assert.match(app.text(), /本次检索未能完成/); assert.doesNotMatch(app.text(), /没有匹配的记忆/); app.destroy();
+  assert.equal(call.url.searchParams.has('status'), false);
+  assert.match(app.text(), /检索状态：timeout · embedding timed out/); assert.match(app.text(), /本次检索未能完成/); assert.doesNotMatch(app.text(), /没有匹配的记忆/);
+  await app.change('记忆状态', 'deleted'); assert.match(app.text(), /显示 0 条/);
+  app.destroy();
 });
 
 test('changing a query while search is in flight discards stale results and releases busy state', async () => {
@@ -237,9 +242,9 @@ test('relevance verification failures and contradictory ready results never clai
 });
 
 test('missing required relevance capabilities fail closed and upgrade polling restores actual fields without auto-saving', async () => {
-  let value = legacyState('0.1.14');
+  let value = legacyState(VERSION);
   const app = harness(() => value); await app.settle();
-  assert.match(app.text(), /缺少 v0\.1\.14 相关性配置或状态字段/); assert.equal(app.find('保存设置').props.disabled, true); assert.equal(app.find('真实验证相关性').props.disabled, true);
+  assert.match(app.text(), new RegExp('缺少 v' + versionRe + ' 相关性配置或状态字段')); assert.equal(app.find('保存设置').props.disabled, true); assert.equal(app.find('真实验证相关性').props.disabled, true);
   await app.find('真实验证相关性').props.onClick(); assert.equal(app.calls.some(call => call.options.method === 'POST'), false);
   value = state(); await app.poll(); assert.equal(app.find('相关性提供方').props.value, 'openai-codex'); assert.equal(app.find('候选上限（1–20）').props.value, 12); assert.equal(app.find('真实验证相关性').props.disabled, false); assert.equal(app.calls.some(call => call.options.method === 'POST'), false);
   const staleVerify = app.find('真实验证相关性').props.onClick;
@@ -258,6 +263,15 @@ test('stage diagnostics remain visible for failed searches and automatic recall 
   const app=harness(call=>call.op==='search'?{ok:false,status:'timeout',memories:[],ambiguities:[],error:'真实失败',diagnostics}:state({retrievals:[{sessionId:'s1',messageId:'r',status:'timeout',query:'q',memoryIds:[],details:{diagnostics}}]}));
   await app.settle();assert.match(app.text(),/阶段诊断（失败不等于无命中）/);assert.match(app.text(),/RETRIEVAL_TIMEOUT/);
   await app.submit();assert.match(app.text(),/检索状态：timeout/);assert.match(app.text(),/"stage": "stream"/);assert.doesNotMatch(app.text(),/没有匹配的记忆/);app.destroy();
+});
+
+test('Host settingsError is shown on the panel until the payload omits it', async () => {
+  let value = state({ settingsError: '设置文件无法加载：Unexpected token' });
+  const app = harness(() => value); await app.settle();
+  assert.match(app.text(), /设置文件错误：设置文件无法加载：Unexpected token/);
+  value = state(); await app.poll();
+  assert.doesNotMatch(app.text(), /设置文件错误/);
+  app.destroy();
 });
 
 test('retry sends queue id and unmount aborts only client reads, never disables Host', async () => {
