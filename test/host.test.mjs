@@ -125,6 +125,80 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
   return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;}};
 }
 
+test('Host provides paged historical failed jobs independent of the recent queue without changing records',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const seed=new MemoryStore((await f.state()).paths.database);
+    try {
+      for(let i=0;i<203;i++) {
+        const job=seed.enqueueEvent({sessionId:'history-test',eventId:String(i),eventTime:source.eventTime});
+        seed.db.prepare("UPDATE queue SET state=?,last_error=?,updated_at=? WHERE id=?").run(i<103?'failed':'done',i<103?'no adapter registered for provider "openai-codex"':null,i<103?'2026-01-01':'2026-02-01',job.id);
+      }
+      const before=seed.db.prepare('SELECT id,state,last_error,updated_at FROM queue ORDER BY rowid').all();
+      assert.equal((await f.state()).queue.some(j=>j.status==='failed'),false);
+      const read=async offset=>{const res=await f.route.fetch(new Request('http://local/api/jiyi?op=failedQueue&offset='+offset));return {status:res.status,body:await res.json()};};
+      const first=await read('0'); assert.equal(first.body.total,103);assert.equal(first.body.queue.length,100);assert.equal(first.body.queue[0].error,'no adapter registered for provider "openai-codex"');
+      const second=await read('100'); assert.equal(second.body.queue.length,3);assert.equal(new Set([...first.body.queue,...second.body.queue].map(j=>j.id)).size,103);
+      for(const invalid of ['-1','1.5','1e3','9007199254740992']) assert.equal((await read(invalid)).status,400);
+      assert.deepEqual(seed.db.prepare('SELECT id,state,last_error,updated_at FROM queue ORDER BY rowid').all(),before);
+    } finally {seed.close();}
+  } finally {await f.cleanup();}
+});
+
+test('Host creates independent manual memories with durable source audits and validates scope and content',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const state=await f.state();
+    const seed=new MemoryStore(state.paths.database);
+    let project,existing;
+    try {
+      project=seed.resolveProject({cwd:f.session.header.cwd});
+      existing=seed.putMemory({scope:'project',projectId:project.id,content:'同样的记忆',factKey:'existing',sources:[source]});
+    } finally {seed.close();}
+    for(const body of [
+      {scope:'global',content:''}, {scope:'global',content:'   '}, {scope:'global',content:'x'.repeat(1501)},
+      {scope:'project',projectId:'missing',content:'x'}, {scope:'project',content:'x'},
+      {scope:'global',projectId:project.id,content:'x'}, {scope:'other',content:'x'},
+      {scope:'global',content:'x',supersedes:[existing.id]},
+    ]) assert.equal((await f.request('createMemory',body)).ok,false,JSON.stringify(body));
+    const made=await f.request('createMemory',{scope:'project',projectId:project.id,content:' 同样的记忆 '});
+    assert.equal(made.ok,true,JSON.stringify(made));
+    assert.match(made.memory.id,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(made.memory.content,'同样的记忆');assert.equal(made.memory.version,1);
+    assert.equal(made.memory.factKey,null);assert.equal(made.memory.projectId,project.id);
+    const audit=made.memory.sources[0];assert.equal(audit.origin,'manual');assert.equal(audit.evidence,'manual-create');
+    const read=await f.request('source',{sessionId:audit.sessionId,eventSeq:0});
+    assert.equal(read.ok,true);assert.equal(read.source.event.type,'jiyi/manual-create');
+    assert.equal(read.source.event.data.memoryId,made.memory.id);assert.equal(read.source.event.data.content,made.memory.content);
+    const global=await f.request('createMemory',{scope:'global',content:'x'.repeat(1500)});
+    assert.equal(global.ok,true,JSON.stringify(global));assert.equal(global.memory.projectId,null);
+    const after=await f.state();
+    assert.equal(after.memories.find(m=>m.id===existing.id).status,'active');
+    assert.equal(after.memories.find(m=>m.id===existing.id).version,existing.version);
+    assert.equal(after.memories.length,3);
+    await f.request('settings',{settings:{embedding:{backend:null}}});
+    assert.equal((await f.request('createMemory',{scope:'global',content:'失败不可写入'})).ok,false);
+    assert.equal((await f.state()).memories.length,3);
+  } finally {await f.cleanup();}
+});
+
+test('Host settings replacement settles an in-flight embedding and closes its child',async()=>{
+  const f=await fixture();
+  try {
+    const pending=f.request('verifyEmbedding',{});
+    const pid=await until(async()=>{const s=await f.state();return s.models.embedding.activeProcesses.find(p=>p.pid)?.pid;});
+    const saved=await f.request('settings',{settings:{embedding:{backend:null}}});
+    assert.equal(saved.ok,true,JSON.stringify(saved));
+    const result=await pending;
+    assert.equal(result.ok,false,'The old in-flight request must settle as a failure');
+    assert.match(result.error,/MODEL_DISPOSED/);
+    assert.throws(()=>process.kill(pid,0),{code:'ESRCH'},'The replaced child has exited');
+    assert.deepEqual((await f.state()).models.embedding.activeProcesses,[]);
+  } finally {await f.cleanup();}
+});
+
 test('Host GET search supports absent session context without SQLite binding errors or scope leakage',async()=>{
   const f=await fixture();
   try {
@@ -218,6 +292,20 @@ test('Host exposes unconfigured models and extraction service failure instead of
   } finally { await f.cleanup(); }
 });
 
+test('Host defers budget-paused extraction without consuming attempts or retrying on the next timer tick',async()=>{
+  const f=await fixture();
+  try {
+    let calls=0;
+    f.ctx.llm.prepareCall=async()=>{calls++;throw Object.assign(new Error('task tree paused'),{code:'TASK_TREE_PAUSED'});};
+    const user={id:'paused-user',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]};
+    f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const first=await until(async()=>{const state=await f.state();return state.queue.find(j=>j.error?.includes('TASK_TREE_PAUSED'));});
+    assert.equal(first.status,'pending');assert.equal(first.attempts,0);assert.equal(calls,1);
+    await new Promise(resolve=>setTimeout(resolve,2200));
+    const after=(await f.state()).queue.find(j=>j.id===first.id);assert.equal(after.status,'pending');assert.equal(after.attempts,0);assert.equal(calls,1);
+  } finally {await f.cleanup();}
+});
+
 test('Host event→durable queue→real local embedding→automatic pre-step injection, replay and tool continuation',async()=>{
   const f=await fixture();
   try {
@@ -246,8 +334,7 @@ test('Host event→durable queue→real local embedding→automatic pre-step inj
     assert.equal(diagnostics.embeddingExecutions.length,1);
     const execution=diagnostics.embeddingExecutions[0];
     assert.ok(Number.isSafeInteger(execution.pid)&&execution.pid>0);
-    assert.equal(execution.exitCode,0);assert.equal(execution.signal,null);
-    assert.throws(()=>process.kill(execution.pid,0),{code:'ESRCH'},'Actual returned query child is closed and no longer present at this check');
+    assert.doesNotThrow(()=>process.kill(execution.pid,0),'The isolated query child remains alive for reuse');
     const continuation={kind:'enter',messages:[{id:'tool-next',role:'tool',source:{kind:'tool'},content:[]}]};
     assert.equal(await pre({agent,signal},async()=>continuation),continuation);
     const repeated=await pre({agent,signal},async()=>({kind:'enter',messages:[newMessage]}));assert.equal(repeated.messages.length,1);

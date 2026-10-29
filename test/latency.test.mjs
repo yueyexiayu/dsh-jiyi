@@ -398,25 +398,28 @@ function mockChildren(t) {
   return children;
 }
 
-test('mock embedding keeps inference/disposal timing truthful and resolves only after owned close', async t => {
-  const children = mockChildren(t), events = [];
-  const models = createModels();
-  let settled = false;
-  const pending = models.embed(['private-query'], { onDiagnostic: e => events.push(e) }).then(value => { settled = true; return value; });
+test('mock embedding reuses an idle child without inventing close evidence', async t => {
+  const children = mockChildren(t), events = [], models = createModels();
+  const first = models.embed(['private-query'], { onDiagnostic: e => events.push(e) });
   const child = children[0];
   child.ready({ assetVerifyMs: 2, runtimeImportMs: 3, pipelineLoadMs: 5, secret: 'secret-token' });
-  child.result({ inferenceMs: 7, disposeMs: 11, pipelineLoadMs: -1, secret: 'secret-token' });
-  await tick(); assert.equal(settled, false); assert.equal(models.getStatus().activeRequests, 1);
-  assert.equal(events.some(e => e.counters?.cleanupClosed === 1), false);
-  child.close();
-  const result = await pending;
+  child.result({ inferenceMs: 7, pipelineLoadMs: -1 });
+  const result = await first;
   assert.equal(models.getStatus().activeRequests, 0);
-  assert.deepEqual(events.filter(e => e.status === 'success').map(e => e.stage), ['input', 'load', 'inferenceAndDispose', 'shutdown']);
-  const counts = finalCounters(events);
-  assert.equal(counts.assetVerifyMs, 2); assert.equal(counts.runtimeImportMs, 3); assert.equal(counts.pipelineLoadMs, 5);
-  assert.equal(counts.inferenceMs, 7); assert.equal(counts.disposeMs, 11); assert.equal(counts.queueWaitMs, 0); assert.equal(counts.cleanupClosed, 1);
-  assert.equal(result.execution.latency.usage, 'unknown'); safeEvents(events);
-  await models.dispose();
+  assert.equal(models.getStatus().activeProcesses[0].phase, 'idle');
+  assert.equal(result.execution.pid, child.pid);
+  assert.equal(result.execution.exitCode, null);
+  assert.equal(result.execution.signal, null);
+  assert.equal('cleanupClosed' in finalCounters(events), false);
+  assert.equal(finalCounters(events).pipelineLoadMs, 5);
+  const second = models.embed(['second']);
+  assert.equal(children.length, 1); child.result({ inferenceMs: 2 });
+  assert.equal((await second).execution.pid, child.pid);
+  safeEvents(events);
+  let closed = false; const disposing = models.dispose().then(() => { closed = true; });
+  await tick(); assert.equal(closed, false); assert.deepEqual(child.kills, ['SIGTERM']);
+  child.close(null, 'SIGTERM'); await disposing;
+  assert.equal(models.getStatus().activeProcesses.length, 0);
 });
 
 test('mock process cancellation A kills only A, waits its close, and B remains independent', async t => {
@@ -439,15 +442,63 @@ test('mock process cancellation A kills only A, waits its close, and B remains i
   assert.equal(events.some(e => e.counters?.cleanupClosed === 1), false);
   children[0].result(); // Late successful message is ignored after cancellation.
   children[0].close(null, 'SIGTERM'); await rejected;
-  children[1].result(); children[1].close(); assert.equal((await b).vectors.length, 1);
+  children[1].result(); assert.equal((await b).vectors.length, 1);
   assert.equal(models.getStatus().activeRequests, 0);
-  assert.ok(events.some(e => e.stage === 'inferenceAndDispose' && e.status === 'cancelled'));
-  safeEvents(events); await models.dispose();
+  assert.ok(events.some(e => e.stage === 'inference' && e.status === 'cancelled'));
+  safeEvents(events); const disposing = models.dispose(); children[1].close(null, 'SIGTERM'); await disposing;
+});
+
+test('mock disposal cancels an active request and permits replacement after close', async t => {
+  const children = mockChildren(t), models = createModels();
+  const pending = models.embed(['one']);
+  const rejected = assert.rejects(pending, error => error.code === 'MODEL_DISPOSED');
+  const disposing = models.dispose();
+  assert.deepEqual(children[0].kills, ['SIGTERM']);
+  await assert.rejects(models.embed(['later']), error => error.code === 'MODEL_DISPOSED');
+  children[0].close(null, 'SIGTERM'); await Promise.all([rejected, disposing]);
+  const replacement = createModels({ config: { timeoutMs: 200 } });
+  const next = replacement.embed(['next']);
+  assert.equal(children.length, 2);
+  children[1].ready(); children[1].result(); await next;
+  const closing = replacement.dispose(); children[1].close(null, 'SIGTERM'); await closing;
+});
+
+test('synchronous load observer cancellation and disposal settle only after child close', async t => {
+  const children = mockChildren(t);
+  for (const action of ['abort', 'dispose']) {
+    const controller = new AbortController(), models = createModels();
+    let disposing;
+    const pending = models.embed(['one'], { signal: controller.signal, onDiagnostic: event => {
+      if (event.stage === 'load' && event.status === 'running') {
+        if (action === 'abort') controller.abort();
+        else disposing = models.dispose();
+      }
+    } });
+    const child = children.at(-1);
+    const failed = assert.rejects(pending, { code: action === 'abort' ? 'ABORTED' : 'MODEL_DISPOSED' });
+    assert.deepEqual(child.kills, ['SIGTERM']);
+    assert.equal(child.input, undefined, 'cancelled work must not be sent');
+    child.close(null, 'SIGTERM');
+    await failed;
+    if (disposing) await disposing;
+    await models.dispose();
+    assert.deepEqual(models.getStatus().activeProcesses, []);
+  }
+});
+
+test('mock crashed child is discarded and a new child can recover', async t => {
+  const children = mockChildren(t), models = createModels();
+  const pending = models.embed(['first']);
+  const rejected = assert.rejects(pending, error => error.code === 'EMBEDDING_PROCESS_CRASH');
+  children[0].close(null, 'SIGKILL'); await rejected;
+  const next = models.embed(['second']);
+  assert.equal(children.length, 2); children[1].ready(); children[1].result(); await next;
+  const closing = models.dispose(); children[1].close(null, 'SIGTERM'); await closing;
 });
 
 test('mock embedding timeout records load vs inference and never claims cleanup before close', async t => {
   const children = mockChildren(t);
-  for (const stage of ['load', 'inferenceAndDispose']) {
+  for (const stage of ['load', 'inference']) {
     const models = createModels({ config: { loadTimeoutMs: 10, timeoutMs: 10 } });
     const events = [];
     const pending = models.embed(['private-query'], { onDiagnostic: e => events.push(e) });

@@ -4,7 +4,7 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.16</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.17</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
@@ -24,7 +24,7 @@ Stop repeating project conventions in every new conversation. After a normal use
 <td width="33%"><strong>🧾 Source-grounded support</strong><br/><br/>An independent check validates <code>id / version / quote</code>. Unrecorded implementation details are not filled in.</td>
 </tr>
 <tr>
-<td><strong>🗂️ A dedicated sidebar</strong><br/><br/>Inspect memories, open sources, correct or delete records, and manage aliases, failed jobs and model settings.</td>
+<td><strong>🗂️ A dedicated sidebar</strong><br/><br/>Create independent memories, inspect sources, correct or delete records, and manage aliases, failed jobs and model settings.</td>
 <td><strong>🔎 Local hybrid retrieval</strong><br/><br/>SQLite, FTS5 and 384-dimensional MiniLM vectors work together. Similarity produces candidates, not permission to inject.</td>
 <td><strong>🛠️ Automatic first</strong><br/><br/>Normal recall does not depend on the main model searching. <code>jiyi_search</code> is an explicit supplement. Errors and timeouts remain visible.</td>
 </tr>
@@ -101,7 +101,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.16**.
+- Confirm **Client / Host both report 0.1.17**.
 - Configure and separately verify extraction, embedding and relevance models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
@@ -122,7 +122,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 - Data and settings live in `$DSH_HOME/storages/jiyi/`, outside Git, with directory/file modes 0700/0600. Do not commit databases, WAL files, credentials, private conversations or raw evaluation records.
 - `/api/jiyi` uses normal DSH authentication. Credentials stay in the Host, not the Client.
-- Default cold-load limit: 120 seconds. Default inference and recall limit: 10 seconds. At most 2 isolated embedding subprocesses. Overload, cancellation, timeouts and cleanup failures are reported explicitly.
+- Default cold-load limit: 120 seconds. Default inference and recall limit: 10 seconds. A Host reuses a live isolated embedding subprocess, with at most 2 concurrent requests. Overload, cancellation, timeouts and cleanup failures are reported explicitly.
 - The runtime is pinned to `@huggingface/transformers@3.8.1`. Models, `node_modules` and runtime caches are not committed.
 - Whether a provider adapter enforces a token budget server-side is provider-dependent. A local budget intention is not a guaranteed server-side limit.
 
@@ -132,8 +132,8 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
-| Public-source regression · Node | **184 / 184** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
-| Public-source regression · Electron | **186 / 186** | Actual installed SDK; no failures, cancellations or skips |
+| 0.1.16 public-source regression · Node | **184 / 184** | Historical result: synthetic sources and controlled LLMs; actual local embeddings / SDK |
+| 0.1.16 public-source regression · Electron | **186 / 186** | Historical result: actual installed SDK; no failures, cancellations or skips |
 | Fixed sample · Q13 | **First 5 / 5** | The specified local pre-publication evaluation |
 | Fixed sample · 36 cases | **36 / 36 × 2 rounds** | No previously correct positive became empty; not a universal guarantee |
 
@@ -161,7 +161,7 @@ Public fixtures are independent of private conversations. `evidence/` contains o
 ## FAQ
 
 **Does closing the sidebar stop the plugin?**<br/>
-No. Closing the panel does not stop the Host. Disabling the plugin stops extraction and recall.
+No. State polling pauses when the panel tab or document is hidden, but the Host continues. Disabling the plugin stops extraction and recall.
 
 **Does the main model have to call a search tool?**<br/>
 No. Automatic recall is the normal path; `jiyi_search` is an explicit supplementary entry point.

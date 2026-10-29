@@ -10,6 +10,39 @@ import { VERSION } from '../lib/index.js';
 import { createEvaluationIpc } from '../lib/eval-ipc.js';
 import { databaseSnapshot } from '../lib/eval-integrity.js';
 
+test('CLI uses package version and rejects mismatched discovery and Host identity',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'ji-cli-version-'));
+  let close, runs=0;
+  const cli=(...args)=>new Promise(resolve=>execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),...args],(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
+  try {
+    const packageVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
+    assert.equal(VERSION,packageVersion);
+    assert.match((await cli('--help')).stdout,new RegExp(`jiyi ${packageVersion.replaceAll('.', '\\.')}`));
+    close=await createEvaluationIpc({dataDir:dir,version:VERSION,runtime:{pid:process.pid,loadedAt:'fixture-host'},run:async()=>{runs++;return {ok:false};}});
+    const receiptPath=join(dir,'eval-endpoint.json'),receipt=JSON.parse(readFileSync(receiptPath,'utf8'));
+    const status=await cli('--status','--data-dir',dir);
+    assert.equal(status.exit,0,status.stderr);assert.equal(JSON.parse(status.stdout).version,packageVersion);
+    for(const [change,expected] of [
+      [{version:VERSION+'-different'},/Host 版本\/IPC路径不匹配/],
+      [{socketPath:join(dir,'wrong.sock')},/Host 版本\/IPC路径不匹配/],
+      [{loadedAt:'different-start'},/实际 Host 与 discovery receipt 不一致/],
+    ]) {
+      writeFileSync(receiptPath,JSON.stringify({...receipt,...change}));
+      const result=await cli('--run','--input','fixture.json','--data-dir',dir);
+      assert.equal(result.exit,1);assert.match(result.stderr,expected);assert.equal(runs,0);
+    }
+    writeFileSync(receiptPath,JSON.stringify(receipt));
+    await close();close=null;
+    close=await createEvaluationIpc({dataDir:dir,version:VERSION+'-different',runtime:{pid:process.pid,loadedAt:'fixture-host'},run:async()=>{runs++;}});
+    writeFileSync(receiptPath,JSON.stringify(receipt));
+    const result=await cli('--run','--input','fixture.json','--data-dir',dir);
+    assert.equal(result.exit,1);assert.match(result.stderr,/实际 Host 与 discovery receipt 不一致/);assert.equal(runs,0);
+  } finally {
+    if(close)await close();
+    assert.equal(dirname(resolve(dir)),resolve(tmpdir()));rmSync(dir,{recursive:true,force:false});
+  }
+});
+
 // Deliberately deceptive fixture Host: reports a true *old* proof then changes
 // its own temporary database with an evaluation id before replying. CLI must catch it.
 for(const mutation of ['metadata','missing-settings']) test(`CLI rejects successful Host proof with post-return ${mutation}`,async()=>{

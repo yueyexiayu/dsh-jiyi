@@ -25,8 +25,12 @@ function harness(handler = () => state()) {
     useRef(initial) { const i = current.index++; return current.hooks[i] || (current.hooks[i] = { current: initial }); },
     useEffect(fn, deps) { const instance = current, i = instance.index++, previous = instance.hooks[i]; if (!previous || deps.some((v, n) => v !== previous.deps[n])) { effects.push(() => { previous?.cleanup?.(); instance.hooks[i] = { deps, cleanup: fn() }; }); } },
   };
-  const styles = new Map();
-  vm.runInNewContext(code, { window: { location: { origin: 'http://127.0.0.1:57479' }, __ModuleLoader__: { load(value) { definition = value; } } }, document: { getElementById: id => styles.get(id), createElement: () => ({}), head: { appendChild(el) { styles.set(el.id, el); } } }, URL, AbortController, console, setInterval(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); }, fetch: async (url, options) => { const parsed = new URL(url, 'http://localhost'); const call = { url: parsed, options, op: parsed.searchParams.get('op'), body: options.body ? JSON.parse(options.body) : null }; calls.push(call); const result = await handler(call); return { ok: (result.httpStatus || 200) < 400, status: result.httpStatus || 200, json: async () => result }; } });
+  const styles = new Map(), listeners = new Map(), observers = new Set();
+  let tabVisible = true, cssVisible = true;
+  const root = { getClientRects: () => tabVisible ? [{}] : [] };
+  const document = { hidden: false, getElementById: id => styles.get(id), createElement: () => ({}), head: { appendChild(el) { styles.set(el.id, el); } }, addEventListener(name, fn) { listeners.set(name, fn); }, removeEventListener(name) { listeners.delete(name); } };
+  class IntersectionObserver { constructor(fn) { this.fn = fn; observers.add(this); } observe() {} disconnect() { observers.delete(this); } }
+  vm.runInNewContext(code, { window: { location: { origin: 'http://127.0.0.1:57479' }, getComputedStyle: () => ({ visibility: cssVisible ? 'visible' : 'hidden' }), __ModuleLoader__: { load(value) { definition = value; } } }, document, IntersectionObserver, URL, AbortController, console, setInterval(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); }, fetch: async (url, options) => { const parsed = new URL(url, 'http://localhost'); const call = { url: parsed, options, op: parsed.searchParams.get('op'), body: options.body ? JSON.parse(options.body) : null }; calls.push(call); const result = await handler(call); return { ok: (result.httpStatus || 200) < 400, status: result.httpStatus || 200, json: async () => result }; } });
   plugin = definition.factory(name => { assert.equal(name, 'react'); return React; });
   const declared = Array.from(plugin.inject);
   const services = { sidebarRightTabs: { register(value) { registrations.push(value); return () => {}; } }, slots: { inject(name, register) { return register(); }, register(options, component) { registrations.push(options); if (options.name === 'sidebar.right.pane.tab') body = component; return () => {}; } }, uiWorkspace: { openSession(id) { opened.push(id); } }, effect(fn) { fn(); } };
@@ -41,6 +45,7 @@ function harness(handler = () => state()) {
       const result = node.type(node.props); current = before;
       return expand(result, key);
     }
+    if (node.props.ref) node.props.ref.current = root;
     return { ...node, props: { ...node.props, children: (node.props.children || []).map((child, i) => expand(child, path + '/' + (child?.props?.key || i))) } };
   }
   function render() { dirty = false; tree = expand(React.createElement(body, { useTabInfo: () => ({ tab: { sessionId: 's1' } }) })); while (effects.length) effects.shift()(); return tree; }
@@ -51,8 +56,62 @@ function harness(handler = () => state()) {
   async function click(label) { const node = find(label); assert.equal(!!node.props.disabled, false, `${label} disabled`); await node.props.onClick?.(); await settle(); }
   async function change(label, value) { find(label).props.onChange({ target: { value } }); await settle(); }
   render();
-  return { plugin, calls, opened, registrations, timers, settle, text, all, find, click, change, render, async poll() { for (const fn of timers.values()) await fn(); await settle(); }, async submit() { await all().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} }); await settle(); }, destroy() { for (const instance of instances.values()) for (const hook of instance.hooks) hook?.cleanup?.(); } };
+  return { plugin, calls, opened, registrations, timers, listeners, observers, settle, text, all, find, click, change, render, async setDocumentVisible(value) { document.hidden = !value; listeners.get('visibilitychange')?.(); await settle(); }, async setTabVisible(value) { tabVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async setCssVisible(value) { cssVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async poll() { for (const fn of timers.values()) await fn(); await settle(); }, async submit() { await all().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} }); await settle(); }, destroy() { for (const instance of instances.values()) for (const hook of instance.hooks) hook?.cleanup?.(); } };
 }
+
+test('creates global and project memories, preserves failed drafts and shows the full saved content', async () => {
+  let fail = false;
+  const app = harness(call => call.op === 'createMemory' ? fail ? { ok: false, httpStatus: 400, error: '创建失败' } : { ok: true, memory: { id: 'new', content: call.body.content } } : state());
+  await app.settle();
+  assert.equal(app.find('保存新记忆').props.disabled, true);
+  assert.equal(app.find('新建记忆内容').props.maxLength, 1500);
+  const content = '第一行\n第二行 <script>完整内容</script>';
+  await app.change('新建记忆内容', content); await app.click('保存新记忆');
+  assert.deepEqual(app.calls.find(c => c.op === 'createMemory').body, { op: 'createMemory', content, scope: 'global', projectId: null });
+  assert.match(app.text(), /第一行\n第二行 <script>完整内容<\/script>/); assert.equal(app.find('新建记忆内容').props.value, '');
+  await app.change('新建记忆范围', 'project'); await app.change('新建记忆内容', '项目草稿');
+  assert.equal(app.find('保存新记忆').props.disabled, true); await app.change('新建记忆项目', 'p1');
+  fail = true; await app.click('保存新记忆'); assert.match(app.text(), /操作失败：创建失败/); assert.equal(app.find('新建记忆内容').props.value, '项目草稿');
+  fail = false; await app.click('保存新记忆'); assert.deepEqual(app.calls.filter(c => c.op === 'createMemory').at(-1).body, { op: 'createMemory', content: '项目草稿', scope: 'project', projectId: 'p1' });
+  app.destroy();
+});
+
+test('queue classifies stored errors conservatively and displays every character', async () => {
+  const full = 'Adapter openai not registered\n详细诊断：' + '很长'.repeat(3000) + '末尾';
+  const app = harness(() => state({ queue: [{ id: 'q1', status: 'failed', error: full }, { id: 'q2', status: 'failed', error: '抽取结果 schema 无效或超过 12 条' }, { id: 'q3', status: 'failed', error: 'request timed out' }] }));
+  await app.settle(); assert.match(app.text(), /失败分类：adapter 未注册/); assert.match(app.text(), /失败分类：抽取 schema 无效/); assert.match(app.text(), /失败分类：未知/); assert.ok(app.text().includes(full)); app.destroy();
+});
+
+test('history loads failed entries on demand, classifies full errors and pages without mutations', async () => {
+  const longError = 'no adapter registered for provider "openai-codex"\n' + '细节'.repeat(1000);
+  const app = harness(call => call.op === 'failedQueue' ? {ok:true,offset:Number(call.url.searchParams.get('offset')),total:101,queue: Number(call.url.searchParams.get('offset')) === 0 ? Array.from({length:100},(_,i)=>({id:String(i),status:'failed',error:i===0?longError:'抽取记忆缺少有效内容/类型/范围/来源'})) : [{id:'old',status:'failed',error:'其他错误'}]} : state({queue:[]}));
+  await app.settle(); assert.equal(app.calls.some(c=>c.op==='failedQueue'),false);
+  await app.click('查看历史失败项'); assert.ok(app.text().includes(longError));
+  assert.match(app.text(),/失败分类：adapter 未注册/); assert.match(app.text(),/失败分类：抽取 schema 无效/);
+  await app.click('下一页失败项'); assert.match(app.text(),/失败分类：未知/); assert.equal(app.find('下一页失败项').props.disabled,true);
+  await app.click('上一页失败项'); assert.equal(app.calls.filter(c=>c.op==='failedQueue').map(c=>c.url.searchParams.get('offset')).join(','),'0,100,0');
+  assert.equal(app.calls.some(c=>c.options.method==='POST'),false); app.destroy();
+});
+
+test('history read failure is visible and does not show a stale page as current', async () => {
+  let fail=false;
+  const app=harness(call=>call.op==='failedQueue' ? fail ? {ok:false,httpStatus:500,error:'队列读取失败'} : {ok:true,offset:0,total:1,queue:[{id:'old',status:'failed',error:'旧错误'}]} : state());
+  await app.settle(); await app.click('查看历史失败项'); assert.match(app.text(),/旧错误/);
+  fail=true; await app.click('查看历史失败项'); assert.match(app.text(),/加载历史失败队列失败：队列读取失败/); assert.doesNotMatch(app.text(),/旧错误/); app.destroy();
+});
+
+test('document or tab hiding stops polling and visibility restoration refreshes once', async () => {
+  const app = harness(); await app.settle();
+  const count = () => app.calls.filter(c => c.op === 'state').length;
+  assert.equal(count(), 1); await app.setDocumentVisible(false); await app.poll(); assert.equal(count(), 1);
+  await app.setDocumentVisible(true); assert.equal(count(), 2);
+  await app.setTabVisible(false); await app.poll(); assert.equal(count(), 2);
+  await app.setDocumentVisible(false); await app.setTabVisible(true); await app.poll(); assert.equal(count(), 2);
+  await app.setDocumentVisible(true); assert.equal(count(), 3);
+  await app.setCssVisible(false); await app.poll(); assert.equal(count(), 3);
+  await app.setCssVisible(true); assert.equal(count(), 4);
+  app.destroy(); assert.equal(app.timers.size, 0); assert.equal(app.listeners.size, 0); assert.equal(app.observers.size, 0);
+});
 
 test('registers isolated keyed jiyi tab and reads only declared services', async () => {
   const app = harness(); await app.settle();
@@ -129,6 +188,13 @@ test('manual correction audit is not exposed as a real session and keeps exact e
   assert.equal(app.all().filter(n => n.type === 'button' && app.text(n) === '打开来源会话').length, 0);
   await app.click('查看来源事件'); assert.deepEqual(app.calls.find(c => c.op === 'source').body, { sessionId: 'jiyi-manual:audit-uuid', eventSeq: 0, op: 'source' });
   assert.match(app.text(), /审计原始事件/); assert.deepEqual(app.opened, []); app.destroy();
+});
+
+test('manual creation provenance is not mislabeled as correction', async () => {
+  const source = { origin: 'manual', evidence: 'manual-create', sessionId: 'jiyi-manual:new', eventSeq: 0, quote: '新建正文' };
+  const app = harness(() => state({ memories: [{ ...memory, sources: [source] }] })); await app.settle();
+  assert.match(app.text(), /管理界面手动新建记录/); assert.doesNotMatch(app.text(), /管理界面手动纠正记录/);
+  assert.equal(app.all().filter(n => n.type === 'button' && app.text(n) === '打开来源会话').length, 0); app.destroy();
 });
 
 test('correction failure retains draft; poll does not clear operation errors; delete requires confirmation', async () => {

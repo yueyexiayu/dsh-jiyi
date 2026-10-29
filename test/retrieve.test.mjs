@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModels, validateEmbeddingConfig, EMBEDDING_MODEL, EMBEDDING_VERSION, EMBEDDING_DIMENSIONS } from '../lib/models.js';
 import { retrieve, cosineSimilarity, estimateTokens, renderMemoryContext } from '../lib/retrieve.js';
+import { searchMemories } from '../lib/search.js';
 
 const vector = (axis = 0) => Array.from({ length: EMBEDDING_DIMENSIONS }, (_, i) => i === axis ? 1 : 0);
 const memory = (id, content, extra = {}) => ({ id, content, version: 1, status: 'active', scope: 'global', embedding: vector(), embeddingModel: EMBEDDING_MODEL, embeddingVersion: EMBEDDING_VERSION, ...extra });
@@ -21,6 +22,69 @@ test('cosine, lexical and exact identifier candidates never bypass the relevance
   assert.equal(rejected.diagnostics.relevance.selectedCount, 0);
   await assert.rejects(retrieve(options, adapter), { code: 'RELEVANCE_UNAVAILABLE' });
   await assert.rejects(retrieve(options, adapter, { judge: async () => { throw Object.assign(new Error('provider unavailable'), { code: 'TEST_RELEVANCE_FAILURE' }); } }), { code: 'TEST_RELEVANCE_FAILURE' });
+});
+
+test('empty searches distinguish unjudged paths from a validated judge rejection', async () => {
+  let calls = 0;
+  const judge = { getStatus: () => ({ status: 'ready' }), judge: async () => { calls++; return { ids: [] }; } };
+  const models = { ...adapter, getStatus: () => ({ status: 'ready' }) };
+  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72, timeoutMs: 10000 } };
+  const search = records => searchMemories({ query: 'weather', settings, models, relevance: judge, readOnly: true, store: {
+    listProjects: () => [], listCandidates: () => records, searchText: () => [], getMemory: id => records.find(record => record.id === id),
+  } });
+  const noRecords = await search([]);
+  assert.equal(noRecords.status, 'no-hit');
+  assert.equal(noRecords.diagnostics.decision, 'not-judged-no-records');
+  assert.deepEqual(noRecords.diagnostics.judge, { called: false, succeeded: false });
+  const noCandidates = await search([memory('a', 'unrelated', { embedding: vector(1) })]);
+  assert.equal(noCandidates.status, 'no-hit');
+  assert.equal(noCandidates.diagnostics.decision, 'not-judged-no-candidates');
+  assert.deepEqual(noCandidates.diagnostics.judge, { called: false, succeeded: false });
+  assert.equal(calls, 0);
+  const rejected = await search([memory('a', 'unrelated')]);
+  assert.equal(rejected.status, 'no-hit');
+  assert.equal(rejected.diagnostics.decision, 'rejected');
+  assert.deepEqual(rejected.diagnostics.judge, { called: true, succeeded: true });
+  assert.equal(calls, 1);
+  const budget = await retrieve({ query: 'weather', records: [memory('a', 'unrelated')], maxMemories: 0 }, models, judge);
+  assert.equal(budget.diagnostics.decision, 'not-judged-budget');
+  const approved = await retrieve({ query: 'weather', records: [memory('a', 'unrelated')] }, models, approveCandidates);
+  assert.equal(approved.diagnostics.decision, 'approved');
+  await assert.rejects(retrieve({ query: 'weather', records: [memory('a', 'unrelated')] }, models, { judge: async () => ({ ids: [{ id: 'missing', version: 1 }] }) }), error => {
+    assert.equal(error.code, 'RELEVANCE_PROTOCOL');
+    assert.deepEqual(error.diagnostics.judge, { called: true, succeeded: false });
+    return true;
+  });
+});
+
+test('scope-empty and below-threshold searches skip the judge while preserving embedding updates', async () => {
+  let judgeCalls = 0, embedCalls = 0;
+  const judge = { getStatus: () => ({ status: 'ready' }), judge: async () => { judgeCalls++; throw new Error('unexpected judge call'); } };
+  const models = { getStatus: () => ({ status: 'ready' }), embed: async texts => {
+    embedCalls++;
+    return { vectors: texts.map((_, i) => vector(i === 0 ? 0 : 1)), model: EMBEDDING_MODEL, version: EMBEDDING_VERSION };
+  } };
+  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72, timeoutMs: 10000 } };
+  const updates = [];
+  const search = records => searchMemories({ query: 'weather', settings, models, relevance: judge, store: {
+    listProjects: () => [], listCandidates: () => records, searchText: () => [],
+    getMemory: id => records.find(record => record.id === id), transaction: fn => fn(),
+    setEmbedding: (...args) => updates.push(args),
+  } });
+  const scopedOut = await search([memory('other', 'weather', { scope: 'project', projectId: 'other' })]);
+  assert.equal(scopedOut.status, 'no-hit');
+  assert.equal(scopedOut.diagnostics.decision, 'not-judged-no-records');
+  assert.equal(embedCalls, 0);
+  const noCandidates = await search([memory('missing', 'unrelated', { embedding: null })]);
+  assert.equal(noCandidates.status, 'no-hit');
+  assert.equal(noCandidates.diagnostics.decision, 'not-judged-no-candidates');
+  assert.deepEqual(noCandidates.diagnostics.judge, { called: false, succeeded: false });
+  assert.deepEqual(noCandidates.diagnostics.candidateRefs, []);
+  assert.equal(noCandidates.diagnostics.rebuiltEmbeddings, 1);
+  assert.equal(noCandidates.diagnostics.stages.some(event => event.stage === 'llm'), false);
+  assert.equal(embedCalls, 1);
+  assert.equal(judgeCalls, 0);
+  assert.deepEqual(updates, [['missing', vector(1), EMBEDDING_MODEL, { expectedVersion: 1, embeddingVersion: EMBEDDING_VERSION }]]);
 });
 
 test('the 0.2 threshold expands candidates only; a below-0.5 candidate still needs explicit approval', async () => {
@@ -236,19 +300,25 @@ test('cancelling one real local process does not kill another session request', 
     assert.equal(result.vectors[0].length, 384);
     assert.ok(result.vectors[0].every(Number.isFinite));
     assert.equal(models.getStatus().activeRequests, 0);
-    assertCleanExit(result);
-  } finally { await models.dispose(); }
+    assertIdleWorker(result, models);
+  } finally { await disposeAndAssertGone(models); }
 });
 
 function assertGone(pid) {
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, `Owned child ${pid} must have exited, not just received a signal.`);
 }
-function assertCleanExit(result) {
+function assertIdleWorker(result, models) {
   assert.equal(result.execution.isolation, 'child-process');
-  assert.equal(result.execution.exitCode, 0);
+  assert.equal(result.execution.exitCode, null);
   assert.equal(result.execution.signal, null);
   assert.notEqual(result.execution.pid, process.pid);
-  assertGone(result.execution.pid);
+  assert.ok(models.getStatus().activeProcesses.some(worker => worker.pid === result.execution.pid && worker.phase === 'idle'));
+  assert.doesNotThrow(() => process.kill(result.execution.pid, 0));
+}
+async function disposeAndAssertGone(models) {
+  const pids = models.getStatus().activeProcesses.map(worker => worker.pid);
+  await models.dispose();
+  for (const pid of pids) assertGone(pid);
 }
 const longInput = () => Array(8).fill('项目约定明确金额字段精度，所有支付账单都应按约定保存，代码评审需确认没有浮点舍入错误。'.repeat(12));
 async function waitForInference(models, pid) {
@@ -262,7 +332,7 @@ async function waitForInference(models, pid) {
   assert.fail('Local child never entered inference before the test deadline.');
 }
 
-test('real ORT dual-process inference repeatedly returns vectors and clean exits; overload is explicit', async () => {
+test('real ORT dual-process inference reuses idle workers; overload is explicit', async () => {
   const models = createModels();
   try {
     for (let round = 0; round < 6; round++) {
@@ -276,11 +346,11 @@ test('real ORT dual-process inference repeatedly returns vectors and clean exits
       for (const result of results) {
         assert.equal(result.vectors.length, 2);
         assert.ok(result.vectors.every(v => v.length === 384 && v.every(Number.isFinite)));
-        assertCleanExit(result);
+        assertIdleWorker(result, models);
       }
       assert.equal(models.getStatus().activeRequests, 0);
     }
-  } finally { await models.dispose(); }
+  } finally { await disposeAndAssertGone(models); }
 });
 
 test('real inference cancellation loop kills only its owned process and reaps every child', async () => {
@@ -295,10 +365,10 @@ test('real inference cancellation loop kills only its owned process and reaps ev
       controller.abort();
       await cancelled;
       assertGone(cancelledPid);
-      assertCleanExit(await survivor);
+      assertIdleWorker(await survivor, models);
       assert.equal(models.getStatus().activeRequests, 0);
     }
-  } finally { await models.dispose(); }
+  } finally { await disposeAndAssertGone(models); }
 });
 
 test('abnormal inference subprocess death cannot crash the parent or its concurrent peer', async () => {
@@ -311,9 +381,9 @@ test('abnormal inference subprocess death cannot crash the parent or its concurr
     process.kill(failedPid, 'SIGKILL'); // Exactly the PID returned for this test's owned child.
     await failed;
     assertGone(failedPid);
-    assertCleanExit(await survivor);
-    assertCleanExit(await models.embed(['父进程仍存活，可继续处理下一次请求。']));
-  } finally { await models.dispose(); }
+    assertIdleWorker(await survivor, models);
+    assertIdleWorker(await models.embed(['父进程仍存活，可继续处理下一次请求。']), models);
+  } finally { await disposeAndAssertGone(models); }
 });
 
 test('dispose during native inference waits for child exit and settles outstanding promises', async () => {

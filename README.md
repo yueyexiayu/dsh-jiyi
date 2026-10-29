@@ -4,7 +4,7 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.16</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.17</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
@@ -24,7 +24,7 @@
 <td width="33%"><strong>🧾 原文支持度</strong><br/><br/>独立判断候选是否支持问项，并校验 <code>id / version / quote</code>，不补写未记录的细节。</td>
 </tr>
 <tr>
-<td><strong>🗂️ 独立管理面板</strong><br/><br/>右侧栏查看记忆、打开来源、纠正或删除，管理项目别名、失败队列与模型设置。</td>
+<td><strong>🗂️ 独立管理面板</strong><br/><br/>右侧栏新建独立记忆、查看来源、纠正或删除，管理项目别名、失败队列与模型设置。</td>
 <td><strong>🔎 本地混合检索</strong><br/><br/>SQLite、FTS5 与384维 MiniLM 向量协同工作；相似度用于产生候选，不授权注入。</td>
 <td><strong>🛠️ 自动优先，工具补充</strong><br/><br/>正常流程无需主模型主动搜索；<code>jiyi_search</code> 提供显式检索补充。错误与超时明确报告。</td>
 </tr>
@@ -101,7 +101,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为0.1.16**。
+- 确认 **Client / Host 均为0.1.17**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
@@ -122,7 +122,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 - 数据与设置位于 `$DSH_HOME/storages/jiyi/`，目录/文件权限为0700/0600；不在 Git 仓库中。不要提交数据库、WAL、凭据、私人会话或原始评测记录。
 - API 为 `/api/jiyi`，走 DSH 正常认证；凭据保留在 Host，不发送到 Client。
-- 模型冷加载默认上限120秒，单次推理与召回默认10秒；最多2个隔离 Embedding 子进程。过载、取消、超时和释放失败明确报告。
+- 模型冷加载默认上限120秒，单次推理与召回默认10秒；同一 Host 复用存活的隔离 Embedding 子进程，最多并发2个请求。过载、取消、超时和释放失败明确报告。
 - 运行库锁定 `@huggingface/transformers@3.8.1`。模型、`node_modules` 与运行缓存不提交到 Git。
 - LLM token 预算是否在服务端实施取决于提供方 adapter，不能把本地预算意图当作服务端硬限制。
 
@@ -132,8 +132,8 @@ node -e "console.log(require.resolve('jiyi'))"
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
-| 公开源码回归 · Node | **184 / 184** | 合成来源、受控 LLM，实际本地 Embedding / SDK |
-| 公开源码回归 · Electron | **186 / 186** | 安装包内实际 SDK；无失败、取消或跳过 |
+| 0.1.16 公开源码回归 · Node | **184 / 184** | 历史结果：合成来源、受控 LLM，实际本地 Embedding / SDK |
+| 0.1.16 公开源码回归 · Electron | **186 / 186** | 历史结果：安装包内实际 SDK；无失败、取消或跳过 |
 | 固定样本 · Q13 | **首次5 / 5** | 发布前的指定本机实测 |
 | 固定样本 · 36题 | **36 / 36 × 2轮** | 未将旧正确应注入项变空；不是全场景保证 |
 
@@ -161,7 +161,7 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 ## 常见问题
 
 **关闭记忆面板会停止工作吗？**<br/>
-不会。关闭面板不停止 Host；停用插件才停止提取与召回。
+不会。面板标签或文档不可见时暂停状态轮询，但不停止 Host；停用插件才停止提取与召回。
 
 **必须让主模型调用搜索工具吗？**<br/>
 不用。自动流程优先，`jiyi_search` 是显式检索的补充入口。

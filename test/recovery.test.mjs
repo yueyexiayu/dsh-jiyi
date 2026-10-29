@@ -56,7 +56,7 @@ async function launch(w,{read,extractMemories=false,beforeExtraction}={}) {
         } else {
           assert.ok(Array.isArray(payload.sources));inputs.push(payload);
           if(beforeExtraction)await beforeExtraction(request);
-          result={memories:extractMemories?payload.sources.map(s=>({content:s.quote,type:'preference',scope:'global',factKey:`preference:${s.sessionId}`,sourceSeqs:[s.eventSeq],quotes:[s.quote],supersedes:[]})):[]};
+          result={memories:extractMemories?payload.sources.map(s=>({content:s.quote,type:'preference',scope:'global',factKey:`preference:${s.quote}`,sourceSeqs:[s.eventSeq],quotes:[s.quote],supersedes:[]})):[]};
         }
         yield {type:'text-delta',index:0,text:JSON.stringify(result)};
         yield {type:'finish',reason:{kind:'stop'}};
