@@ -1,6 +1,6 @@
 {
   "name": "jiyi",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "type": "module",
   "description": "DSH native durable background memory and automatic scoped hybrid recall",
