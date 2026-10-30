@@ -39,9 +39,10 @@ function workspace(t) {
   return {dir,session,events,db,activeStops};
 }
 async function launch(w,{read,extractMemories=false,beforeExtraction}={}) {
-  const listeners=new Map(),effects=[],routes=new Map(),inputs=[];
+  const listeners=new Map(),effects=[],routes=new Map(),inputs=[],marks=[];
   let opens=0,closes=0,stopped=false;
   const helpers={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
+  helpers.markTaskBudgetBackground=(request,sessionId,taskId,jobId)=>marks.push({sessionId,taskId,jobId});
   const ctx={
     connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helpers},
     llm:{prepareCall:async(config,signal,configure)=>{
@@ -88,8 +89,41 @@ async function launch(w,{read,extractMemories=false,beforeExtraction}={}) {
   };
   const stop=async()=>{if(stopped)return;stopped=true;for(const effect of effects.reverse())if(typeof effect==='function')await effect();w.activeStops.delete(stop);};
   w.activeStops.add(stop);
-  return {emit,state,stop,inputs,get opens(){return opens;},get closes(){return closes;}};
+  return {emit,state,stop,inputs,marks,get opens(){return opens;},get closes(){return closes;}};
 }
+
+test('review pause retains original task sources through restart and extracts only after matching continuation',async t=>{
+  const w=workspace(t);let f=await launch(w);
+  t.after(async()=>{await f?.stop();});
+  const original=user(1);original.data.taskId='task-original';f.emit(original);
+  f.emit({seq:2,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_REVIEW_PAUSED',message:'paused'}}}});
+  assert.equal((await f.state()).queue.length,0);
+  w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id].reviewPendingTaskId,'task-original'));
+  await f.stop();
+  f=await launch(w);
+  await until(()=>f.closes===1);
+  f.emit(end(3,2));
+  assert.equal((await f.state()).queue.length,0,'an unrelated completion cannot consume retained sources');
+  f.emit({seq:4,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:'task-original',role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}});
+  f.emit(end(5,3));
+  await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
+  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);
+  assert.equal(f.marks[0].taskId,'task-original');
+  w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending,[]));
+});
+
+test('a new task cannot inherit sources from a paused review, and ordinary errors still discard sources',async t=>{
+  const w=workspace(t),f=await launch(w);t.after(()=>f.stop());
+  const old=user(1,'旧任务的长期偏好');old.data.taskId='old-task';f.emit(old);
+  f.emit({seq:2,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_REVIEW_PAUSED'}}}});
+  const next=user(3,'新任务的长期偏好');next.data.taskId='new-task';f.emit(next);f.emit(end(4,2));
+  await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
+  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[3]);assert.equal(f.marks[0].taskId,'new-task');
+  const failed=user(5,'失败任务的长期偏好');failed.data.taskId='failed-task';f.emit(failed);
+  f.emit({seq:6,time:Date.now(),type:'turn/end',data:{turn:3,reason:{kind:'error',error:{code:'OTHER'}}}});
+  w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending,[]));
+  assert.equal((await f.state()).queue.length,1);
+});
 
 test('watch metadata failure rolls back queue and recovers duplicate end-event exactly once',async t=>{
   const w=workspace(t);let f;
