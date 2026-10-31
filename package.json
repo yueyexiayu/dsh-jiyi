@@ -1,11 +1,11 @@
 {
   "name": "jiyi",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "type": "module",
   "description": "DSH native durable background memory and automatic scoped hybrid recall",
   "main": "lib/index.js",
-  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js" },
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./locale/*.json": "./locale/*.json" },
   "scripts": { "test": "/usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

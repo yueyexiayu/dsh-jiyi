@@ -13,6 +13,8 @@
 !/cordis.patch.yml
 !/lib/
 !/lib/**
+!/locale/
+!/locale/*.json
 !/scripts/
 !/scripts/**
 !/test/
