@@ -292,25 +292,19 @@ test('Host exposes unconfigured models and extraction service failure instead of
   } finally { await f.cleanup(); }
 });
 
-test('Host passes the original user task and durable job identity into background extraction',async()=>{
+test('Host extracts completed task sources without cost attribution helpers',async()=>{
   const f=await fixture();
   try {
-    const identities=[];
-    f.helper.markTaskBudgetBackground=(request,sessionId,taskId,jobId)=>identities.push({sessionId,taskId,jobId});
     const user={id:'task-user',taskId:'original-task',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]};
     f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
-    await until(()=>identities.length);
-    assert.equal(identities[0].sessionId,f.session.id);
-    assert.equal(identities[0].taskId,'original-task');
-    assert.match(identities[0].jobId,/^[0-9a-f-]{36}:[0-9a-f-]{36}$/i);
+    await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
   } finally {await f.cleanup();}
 });
 
 test('a failed extraction after a returned response uses a new durable attempt on retry',async()=>{
   const f=await fixture();
   try {
-    const identities=[];let calls=0;
-    f.helper.markTaskBudgetBackground=(request,sessionId,taskId,jobId)=>identities.push(jobId);
+    let calls=0;
     const prepare=f.ctx.llm.prepareCall;
     f.ctx.llm.prepareCall=async(...args)=>{
       const call=await prepare(...args), original=call.stream;
@@ -324,9 +318,7 @@ test('a failed extraction after a returned response uses a new durable attempt o
     const user={id:'retry-user',taskId:'original-task',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]};
     f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
     await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-    assert.equal(identities.length,2);
-    assert.equal(identities[0].split(':')[0],identities[1].split(':')[0]);
-    assert.notEqual(identities[0],identities[1]);
+    assert.equal(calls,2);
   } finally {await f.cleanup();}
 });
 

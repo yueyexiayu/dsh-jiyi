@@ -39,10 +39,9 @@ function workspace(t) {
   return {dir,session,events,db,activeStops};
 }
 async function launch(w,{read,extractMemories=false,beforeExtraction,guard}={}) {
-  const listeners=new Map(),effects=[],routes=new Map(),inputs=[],marks=[];
+  const listeners=new Map(),effects=[],routes=new Map(),inputs=[];
   let opens=0,closes=0,stopped=false;
   const helpers={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
-  helpers.markTaskBudgetBackground=(request,sessionId,taskId,jobId)=>marks.push({sessionId,taskId,jobId});
   const ctx={
     connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helpers},
     llm:{...(guard?{getTaskBudgetGuard:()=>guard}:{}),prepareCall:async(config,signal,configure)=>{
@@ -89,7 +88,7 @@ async function launch(w,{read,extractMemories=false,beforeExtraction,guard}={}) 
   };
   const stop=async()=>{if(stopped)return;stopped=true;for(const effect of effects.reverse())if(typeof effect==='function')await effect();w.activeStops.delete(stop);};
   w.activeStops.add(stop);
-  return {emit,state,stop,inputs,marks,get opens(){return opens;},get closes(){return closes;}};
+  return {emit,state,stop,inputs,get opens(){return opens;},get closes(){return closes;}};
 }
 
 test('review pause retains original task sources through restart and extracts only after matching continuation',async t=>{
@@ -108,7 +107,6 @@ test('review pause retains original task sources through restart and extracts on
   f.emit(end(5,3));
   await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
   assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);
-  assert.equal(f.marks[0].taskId,'task-original');
   w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending,[]));
 });
 
@@ -122,7 +120,7 @@ test('correction pause preserves sources across restart until the same task expl
   f.emit(end(3,2));assert.equal((await f.state()).queue.length,0);
   f.emit({seq:4,time:Date.now(),type:'user/message',data:{id:'correction-cont',taskId:'correction-task',role:'user',source:{kind:'plugin:jiupian-continuation'},content:[{type:'text',text:'继续原任务'}]}});
   f.emit(end(5,3));await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);assert.equal(f.marks[0].taskId,'correction-task');
+  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);
 });
 
 test('correction continuation from a different or unattributed task never inherits old sources',async t=>{
@@ -156,7 +154,7 @@ test('an unrelated review continuation cannot authorize correction-paused memory
   f.emit(end(4,2));assert.equal((await f.state()).queue.length,0);
 });
 
-test('only a durable same-identity correction release permits a cost-review continuation after restart',async t=>{
+test('historical cross-reason continuation keeps its sources without calling the removed service',async t=>{
   const w=workspace(t),identity={taskId:'original-task',requestId:'correction-123',epoch:4};let calls=0;
   const guard={getCorrectionRelease(sessionId,query){calls++;assert.equal(sessionId,w.session.id);assert.deepEqual(query,{taskId:identity.taskId,requestId:identity.requestId});return {taskId:identity.taskId,requestId:identity.requestId,epoch:4,remainingOwners:['review']};}};
   let f=await launch(w,{guard});t.after(async()=>{await f?.stop();});
@@ -165,73 +163,65 @@ test('only a durable same-identity correction release permits a cost-review cont
   f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
   await f.stop();f=await launch(w,{guard});await until(()=>f.closes===1);
   f.emit({seq:4,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:identity.taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}});
-  f.emit(end(5,2));await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.equal(calls,1);assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);assert.equal(f.marks[0].taskId,identity.taskId);
+  f.emit(end(5,2));assert.equal((await f.state()).queue.length,0);
+  assert.equal(calls,0);w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending.map(source=>source.eventSeq),[1]));
 });
 
-test('missing, mismatched, or unavailable durable release evidence keeps correction sources pending',async t=>{
-  for(const mode of ['missing-record','missing-release','wrong-epoch','no-review','throw']) {
-    const w=workspace(t),identity={taskId:'original-task',requestId:'correction-123',epoch:4};
-    const guard={getCorrectionRelease(){if(mode==='throw')throw new Error('unavailable');return mode==='missing-release'?undefined:{taskId:identity.taskId,requestId:identity.requestId,epoch:mode==='wrong-epoch'?5:4,remainingOwners:mode==='no-review'?['user']:['review']};}};
-    const f=await launch(w,{guard});t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
-    if(mode!=='missing-record')f.emit({seq:2,time:Date.now(),type:'plugin:jiupian/pause',ignorable:true,data:identity});
-    f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
-    f.emit({seq:4,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:identity.taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}});
-    f.emit(end(5,2));assert.equal((await f.state()).queue.length,0,mode);
-    w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id].pending.length,1,mode));
-  }
+test('historical cross-reason continuation without an identity record keeps its sources',async t=>{
+  const w=workspace(t),f=await launch(w);t.after(()=>f.stop());const original=user(1);original.data.taskId='original-task';f.emit(original);
+  f.emit({seq:2,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
+  f.emit({seq:3,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:'original-task',role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}});
+  f.emit(end(4,2));assert.equal((await f.state()).queue.length,0);
+  w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id].pending.length,1));
 });
 
-test('deferred cross-reason continuation retries after restart when durable release proof becomes available',async t=>{
-  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-late',epoch:7};let available=false;
-  const guard={getCorrectionRelease(){if(!available)throw new Error('temporarily unavailable');return {...identity,remainingOwners:['review']};}};
-  let f=await launch(w,{guard});t.after(async()=>{await f?.stop();});
+test('deferred historical cross-reason sources remain after restart',async t=>{
+  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-late',epoch:7};
+  let f=await launch(w);t.after(async()=>{await f?.stop();});
   const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
   f.emit({seq:2,time:Date.now(),type:'plugin:jiupian/pause',ignorable:true,data:identity});
   f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
   const continuation={seq:4,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:identity.taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}};
   f.emit(continuation);f.emit(continuation);const completed=end(5,2);f.emit(completed);f.emit(completed);
   assert.equal((await f.state()).queue.length,0);w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id].pending.length,1));
-  await f.stop();available=true;f=await launch(w,{guard});
-  await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.equal((await f.state()).queue.length,1);assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);assert.equal(f.marks[0].taskId,identity.taskId);
+  await f.stop();f=await launch(w);
+  await until(()=>f.closes===1);
+  assert.equal((await f.state()).queue.length,0);w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending.map(source=>source.eventSeq),[1]));
 });
 
 test('a fresh different task cannot inherit sources from a deferred cross-reason continuation',async t=>{
-  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-new',epoch:7};let available=false;
-  const guard={getCorrectionRelease(){return available?{...identity,remainingOwners:['review']}:undefined;}};
-  const f=await launch(w,{guard});t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
+  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-new',epoch:7};
+  const f=await launch(w);t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
   f.emit({seq:2,time:Date.now(),type:'plugin:jiupian/pause',ignorable:true,data:identity});
   f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
   f.emit({seq:4,time:Date.now(),type:'user/message',data:{id:'review-cont',taskId:identity.taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续原任务'}]}});
-  f.emit(end(5,2));const next=user(6,'新任务的长期偏好');next.data.taskId='new-task';f.emit(next);available=true;f.emit(end(7,3));
+  f.emit(end(5,2));const next=user(6,'新任务的长期偏好');next.data.taskId='new-task';f.emit(next);f.emit(end(7,3));
   await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.equal((await f.state()).queue.length,1);assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[6]);assert.equal(f.marks[0].taskId,'new-task');
+  assert.equal((await f.state()).queue.length,1);assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[6]);
+  w.db(s=>assert.deepEqual(s.getMetadata(`retainedPausedSources:${w.session.id}:6`).sources.map(source=>source.eventSeq),[1]));
 });
 
 test('a different task continuation invalidates the earlier deferred completion candidate',async t=>{
-  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-switch',epoch:7};let available=false;
-  const guard={getCorrectionRelease(){return available?{...identity,remainingOwners:['review']}:undefined;}};
-  const f=await launch(w,{guard});t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
+  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-switch',epoch:7};
+  const f=await launch(w);t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
   f.emit({seq:2,time:Date.now(),type:'plugin:jiupian/pause',ignorable:true,data:identity});
   f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
   const cont=(seq,taskId)=>({seq,time:Date.now(),type:'user/message',data:{id:`review-${seq}`,taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续'}]}});
-  f.emit(cont(4,identity.taskId));f.emit(cont(5,'other-task'));available=true;f.emit(end(6,2));
+  f.emit(cont(4,identity.taskId));f.emit(cont(5,'other-task'));f.emit(end(6,2));
   await new Promise(resolve=>setTimeout(resolve,50));assert.equal((await f.state()).queue.length,0);
   w.db(s=>{const watch=s.getMetadata('watchedSessions')[w.session.id];assert.equal(watch.pending.length,1);assert.equal(watch.crossContinuation,undefined);});
 });
 
-test('a fresh confirmed continuation does not extract using an earlier deferred turn end',async t=>{
-  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-again',epoch:7};let available=false;
-  const guard={getCorrectionRelease(){return available?{...identity,remainingOwners:['review']}:undefined;}};
-  const f=await launch(w,{guard});t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
+test('repeated historical cross-reason continuations remain pending',async t=>{
+  const w=workspace(t),identity={taskId:'original-task',requestId:'correction-again',epoch:7};
+  const f=await launch(w);t.after(()=>f.stop());const original=user(1);original.data.taskId=identity.taskId;f.emit(original);
   f.emit({seq:2,time:Date.now(),type:'plugin:jiupian/pause',ignorable:true,data:identity});
   f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_CORRECTION_PAUSED'}}}});
   const cont=seq=>({seq,time:Date.now(),type:'user/message',data:{id:`review-${seq}`,taskId:identity.taskId,role:'user',source:{kind:'chengben-review'},content:[{type:'text',text:'继续'}]}});
-  f.emit(cont(4));f.emit(end(5,2));available=true;f.emit(cont(6));
+  f.emit(cont(4));f.emit(end(5,2));f.emit(cont(6));
   await new Promise(resolve=>setTimeout(resolve,2200));assert.equal((await f.state()).queue.length,0,'old completed turn must not authorize extraction during the new turn');
-  f.emit(end(7,3));await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[1]);assert.equal(f.marks[0].taskId,identity.taskId);
+  f.emit(end(7,3));assert.equal((await f.state()).queue.length,0);
+  w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending.map(source=>source.eventSeq),[1]));
 });
 
 test('a new task cannot inherit sources from a paused review, and ordinary errors still discard sources',async t=>{
@@ -240,11 +230,21 @@ test('a new task cannot inherit sources from a paused review, and ordinary error
   f.emit({seq:2,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_REVIEW_PAUSED'}}}});
   const next=user(3,'新任务的长期偏好');next.data.taskId='new-task';f.emit(next);f.emit(end(4,2));
   await until(async()=> (await f.state()).queue.some(j=>j.status==='done'));
-  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[3]);assert.equal(f.marks[0].taskId,'new-task');
+  assert.deepEqual(f.inputs[0].sources.map(s=>s.eventSeq),[3]);
+  w.db(s=>assert.deepEqual(s.getMetadata(`retainedPausedSources:${w.session.id}:3`).sources.map(source=>source.eventSeq),[1]));
   const failed=user(5,'失败任务的长期偏好');failed.data.taskId='failed-task';f.emit(failed);
   f.emit({seq:6,time:Date.now(),type:'turn/end',data:{turn:3,reason:{kind:'error',error:{code:'OTHER'}}}});
   w.db(s=>assert.deepEqual(s.getMetadata('watchedSessions')[w.session.id].pending,[]));
   assert.equal((await f.state()).queue.length,1);
+});
+
+test('a failed historical review retry retains the paused sources separately',async t=>{
+  const w=workspace(t),f=await launch(w);t.after(()=>f.stop());
+  const original=user(1);original.data.taskId='old-task';f.emit(original);
+  f.emit({seq:2,time:Date.now(),type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'TASK_REVIEW_PAUSED'}}}});
+  f.emit({seq:3,time:Date.now(),type:'turn/end',data:{turn:2,reason:{kind:'error',error:{code:'OTHER'}}}});
+  w.db(s=>assert.deepEqual(s.getMetadata(`retainedPausedSources:${w.session.id}:3`).sources.map(source=>source.eventSeq),[1]));
+  assert.equal((await f.state()).queue.length,0);
 });
 
 test('watch metadata failure rolls back queue and recovers duplicate end-event exactly once',async t=>{

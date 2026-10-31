@@ -4,7 +4,7 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.19</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.20</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
@@ -15,9 +15,11 @@
 > [!NOTE]
 > **本地保存，不等于完全离线。** 记忆、索引与 Embedding 在本机；提取和相关性判断会将所需内容发送给你配置的 LLM 提供方，使用已有授权。
 
-配合支持后台任务归属的 DSH Host 和 chengben，新任务的后台提取用量归入产生该提取的原任务；晚到的用量不会转嫁到后续新任务。旧队列记录若缺少任务身份，其归属未知，不会凭猜测补记。后台请求未结算或用量未知时需要核查；为避免重复消耗，同一队列任务存在不确定的模型请求时不会自动再次派发，目前没有专用对账入口。已知结算后的提取或保存失败可重试，每次调用单独计量。
+后台提取和相关性判断使用配置的模型；其用量不再归入原任务的成本账本。
 
-纠偏或成本复盘暂停时，jiyi 仅为有明确任务身份的来源等待同任务接续。跨暂停原因接续需要持久的纠偏身份和解除证明；证明暂不可用时保留来源并重试，不将其归入其他任务。
+此版本面向已移除成本准入的 DSH Host。旧版带成本控制准入的 Host 可能因后台请求缺少成本归属而阻断提取或相关性判断；请使用匹配的 Host。
+
+对历史纠偏或成本复盘暂停记录，jiyi 保留同任务接续识别；无法确认的跨原因接续继续保留来源，不将其归入其他任务。
 
 ## 核心能力
 
@@ -105,7 +107,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.19**。
+- 确认 **Client / Host 均为 0.1.20**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 

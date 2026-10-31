@@ -15,53 +15,26 @@ class Assembler {
   blocks(){return [{type:'text',text:this.text}];}
 }
 function modelFixture(answer) {
-  const attribution=new WeakMap(),requests=[];
-  const helpers={BlockAssembler:Assembler,createUserMessage:value=>({...value,id:'isolated',role:'user'}),markTaskBudgetSession:(request,id)=>attribution.set(request,id)};
-  const ctx={llm:{getTaskBudgetGuard:()=>({}),prepareCall:async(config,_signal,configure)=>({config:configure(config,{}),stream:request=>{
-    requests.push({request,id:attribution.get(request)});
+  const requests=[];
+  const helpers={BlockAssembler:Assembler,createUserMessage:value=>({...value,id:'isolated',role:'user'})};
+  const ctx={llm:{prepareCall:async(config,_signal,configure)=>({config:configure(config,{}),stream:request=>{
+    requests.push({request});
     return (async function*(){yield {type:'text-delta',index:0,text:answer};yield {type:'finish',reason:{kind:'stop'}};})();
   }})}};
   return {helpers,ctx,requests};
 }
 
-test('background extraction uses an explicit local session identity and keeps SDK replay isolated',async()=>{
+test('legacy queue identity stays out of model input without cost helpers',async()=>{
   const f=modelFixture('{"memories":[]}');
-  await callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sessionId:'actual-session',sources:[{sessionId:'actual-session',eventSeq:1,quote:'test'}]},undefined,{budgetSessionId:'actual-session'});
-  const {request,id}=f.requests[0];assert.equal(id,'actual-session');
+  await callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sessionId:'actual-session',budgetTaskId:'old-task',sources:[{sessionId:'actual-session',eventSeq:1,quote:'test'}]});
+  const {request}=f.requests[0];
   for(const key of ['sessionId','purpose','context','replayState'])assert.equal(Object.hasOwn(request,key),false);
   const input=JSON.parse(request.messages[0].content[0].text);assert.equal(Object.hasOwn(input,'sessionId'),false);assert.equal(Object.hasOwn(input.sources[0],'sessionId'),false);assert.equal(JSON.stringify(request).includes('actual-session'),false);
   assert.deepEqual(request.tools,[]);
-  const noLocalMarker=modelFixture('{"memories":[]}');delete noLocalMarker.helpers.markTaskBudgetSession;
-  await assert.rejects(callExtraction(noLocalMarker.ctx,noLocalMarker.helpers,{extraction:{provider:'fixture',model:'model'}},{sources:[]},undefined,{budgetSessionId:'actual-session'}),{code:'EXTRACTION_BUDGET_ATTRIBUTION_UNAVAILABLE'});
-  assert.equal(noLocalMarker.requests.length,0);
-  delete noLocalMarker.ctx.llm.getTaskBudgetGuard;
-  assert.equal(await callExtraction(noLocalMarker.ctx,noLocalMarker.helpers,{extraction:{provider:'fixture',model:'model'}},{sources:[]},undefined,{budgetSessionId:'actual-session'}),'{"memories":[]}');
+  assert.equal(JSON.stringify(request).includes('old-task'),false);
 });
 
-test('legacy extraction selects explicit unattributed background marker',async()=>{
-  const f=modelFixture('{"memories":[]}');let marked=0;
-  f.helpers.markTaskBudgetUnattributedBackground=(request,id)=>{marked++;assert.equal(id,'session');};
-  f.helpers.markTaskBudgetSession=()=>{throw new Error('must not bind the current task');};
-  await callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sources:[]},undefined,{budgetSessionId:'session'});
-  assert.equal(marked,1);
-});
-
-test('background task and job identity stays local and is never sent in model input',async()=>{
-  const f=modelFixture('{"memories":[]}');let received;
-  f.helpers.markTaskBudgetBackground=(request,sessionId,taskId,jobId)=>{received={request,sessionId,taskId,jobId};};
-  const job='12345678-1234-1234-1234-123456789abc';
-  await callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},
-    {sessionId:'session',budgetTaskId:'task',sources:[{sessionId:'session',eventSeq:1,quote:'test'}]},undefined,
-    {budgetSessionId:'session',budgetTaskId:'task',budgetJobId:job});
-  assert.equal(received.sessionId,'session');assert.equal(received.taskId,'task');assert.equal(received.jobId,job);
-  const request=f.requests[0].request;
-  assert.equal(JSON.stringify(request).includes(job),false);assert.equal(JSON.stringify(request).includes('budgetTaskId'),false);
-  delete f.helpers.markTaskBudgetBackground;
-  await assert.rejects(callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sources:[]},undefined,
-    {budgetSessionId:'session',budgetTaskId:'task',budgetJobId:job}),{code:'EXTRACTION_BUDGET_ATTRIBUTION_UNAVAILABLE'});
-});
-
-test('native search carries identity only in local attribution through the relevance chain',async()=>{
+test('native search works without cost attribution helpers',async()=>{
   const f=modelFixture('{"ids":[{"id":"m1","version":1,"quote":"weather preference"}]}');
   const relevance=createRelevanceJudge({ctx:f.ctx,helpers:f.helpers,config:{provider:'fixture',model:'model'}});
   const vector=Array.from({length:EMBEDDING_DIMENSIONS},(_,i)=>i===0?1:0);
@@ -69,8 +42,8 @@ test('native search carries identity only in local attribution through the relev
   const models={getStatus:()=>({status:'ready'}),embed:async texts=>({vectors:texts.map(()=>vector),model:EMBEDDING_MODEL,version:EMBEDDING_VERSION})};
   const store={listProjects:()=>[],listCandidates:()=>[memory],searchText:()=>[],getMemory:()=>memory};
   const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:0.2,statusStaleHours:72,timeoutMs:10000}};
-  const result=await searchMemories({query:'weather',store,settings,models,relevance,readOnly:true,budgetSessionId:'real-session'});
-  assert.equal(result.status,'hit',JSON.stringify(result));assert.equal(f.requests[0].id,'real-session');
+  const result=await searchMemories({query:'weather',store,settings,models,relevance,readOnly:true});
+  assert.equal(result.status,'hit',JSON.stringify(result));
   const request=f.requests[0].request,payload=JSON.parse(request.messages[0].content[0].text);
   assert.equal(Object.hasOwn(request,'sessionId'),false);assert.equal(Object.hasOwn(payload,'sessionId'),false);assert.deepEqual(request.tools,[]);
   await relevance.dispose();
