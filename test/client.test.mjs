@@ -33,7 +33,7 @@ function harness(handler = () => state()) {
   vm.runInNewContext(code, { window: { location: { origin: 'http://127.0.0.1:57479' }, getComputedStyle: () => ({ visibility: cssVisible ? 'visible' : 'hidden' }), __ModuleLoader__: { load(value) { definition = value; } } }, document, IntersectionObserver, URL, AbortController, console, setInterval(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); }, fetch: async (url, options) => { const parsed = new URL(url, 'http://localhost'); const call = { url: parsed, options, op: parsed.searchParams.get('op'), body: options.body ? JSON.parse(options.body) : null }; calls.push(call); const result = await handler(call); return { ok: (result.httpStatus || 200) < 400, status: result.httpStatus || 200, json: async () => result }; } });
   plugin = definition.factory(name => { assert.equal(name, 'react'); return React; });
   const declared = Array.from(plugin.inject);
-  const services = { sidebarRightTabs: { register(value) { registrations.push(value); return () => {}; } }, slots: { inject(name, register) { return register(); }, register(options, component) { registrations.push(options); if (options.name === 'sidebar.right.pane.tab') body = component; if (options.name === 'conversation.chat.turnTail') tail = component; return () => {}; } }, uiWorkspace: { openSession(id) { opened.push(id); } }, effect(fn) { fn(); } };
+  const services = { sidebarRightTabs: { register(value) { registrations.push(value); return () => {}; } }, slots: { inject(name, register) { return register(); }, register(options, component) { registrations.push(options); if (options.name === 'sidebar.right.pane.tab') body = component; if (options.name === 'conversation.input.dock') tail = component; return () => {}; } }, uiWorkspace: { openSession(id) { opened.push(id); } }, effect(fn) { fn(); } };
   const context = new Proxy(services, { get(target, key) { if (key !== 'effect') assert.ok(declared.includes(key), `undeclared service ${String(key)}`); return target[key]; } });
   plugin.apply(context);
   function expand(node, path = 'root') {
@@ -117,7 +117,7 @@ test('registers isolated keyed jiyi tab and reads only declared services', async
   const app = harness(); await app.settle();
   assert.deepEqual(Array.from(app.plugin.inject), ['slots', 'sidebarRightTabs', 'uiWorkspace']);
   assert.equal(app.registrations[0].id, 'jiyi'); assert.equal(app.registrations[0].kind, 'jiyi');
-  assert.deepEqual(app.registrations.slice(1).map(x => [x.name, x.key || x.id]), [['sidebar.right.pane.tab', 'jiyi'], ['sidebar.right.pane.tab.title', 'jiyi'], ['conversation.chat.turnTail', 'jiyi']]);
+  assert.deepEqual(app.registrations.slice(1).map(x => [x.name, x.key || x.id]), [['sidebar.right.pane.tab', 'jiyi'], ['sidebar.right.pane.tab.title', 'jiyi'], ['conversation.input.dock', 'jiyi']]);
   assert.match(app.text(), new RegExp('v' + versionRe)); assert.match(app.text(), /extract-test/); assert.match(app.text(), /embed-test/); assert.match(app.text(), /seq 42/); assert.match(app.text(), /用户明确表达的原话/);
   assert.doesNotMatch(app.text(), /其他会话不展示/); assert.equal(app.all().some(n => n.type === 'script'), false);
   app.destroy();
@@ -136,14 +136,17 @@ test('lets the user choose whether a memory is always loaded', async () => {
   app.destroy();
 });
 
-test('shows committed changes in their matching conversation turn and refreshes', async () => {
+test('shows the latest committed changes above the input and isolates sessions', async () => {
   let items = [];
-  const app = harness(call => call.op === 'changes' ? { ok: true, changes: [{ turn: 2, eventSeq: 20, items }, { turn: 3, eventSeq: 30, items: [{ type: 'added', id: 'other', content: '其他回合' }] }] } : state());
-  await app.settle(); app.showTail({ sessionId: 's1', turn: { turn: 2 } }); await app.settle();
-  assert.doesNotMatch(app.text(), /记忆：已变更/);
+  const app = harness(call => call.op === 'changes' ? { ok: true, changes: call.url.searchParams.get('sessionId') === 's1' ? [{ turn: 2, eventSeq: 20, items }, { turn: 1, eventSeq: 30, items: [{ type: 'added', id: 'old', content: '旧回合' }] }] : [{ turn: 1, items: [{ type: 'added', id: 'other', content: '另一个会话' }] }] } : state());
+  await app.settle(); app.showTail({ session: { sessionId: 's1' } }); await app.settle();
+  assert.match(app.text(), /旧回合/);
   items = [{ type: 'added', id: 'm1', content: '偏好中文' }, { type: 'updated', id: 'm2', content: '项目事实' }];
-  await app.poll(); assert.match(app.text(), /记忆：已变更 2 条/); assert.match(app.text(), /新增：偏好中文/); assert.match(app.text(), /更新：项目事实/); assert.doesNotMatch(app.text(), /其他回合/);
+  await app.poll(); assert.match(app.text(), /记忆：已变更 2 条/); assert.match(app.text(), /新增：偏好中文/); assert.match(app.text(), /更新：项目事实/); assert.doesNotMatch(app.text(), /旧回合/);
   assert.equal(app.calls.find(call => call.op === 'changes').url.searchParams.get('sessionId'), 's1');
+  assert.equal(app.all().find(node=>node.type==='details').props['data-jiyi-turn'], 2);
+  app.showTail({ sessionId: 's2' }); assert.doesNotMatch(app.text(), /偏好中文|项目事实/); await app.settle();
+  assert.match(app.text(), /另一个会话/); assert.doesNotMatch(app.text(), /偏好中文|项目事实/);
   app.destroy();
 });
 
