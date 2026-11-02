@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseExtraction, EXTRACTION_SYSTEM } from '../lib/extract.js';
+import { parseExtraction } from '../lib/extract.js';
+import { REVIEW_SYSTEM } from '../lib/review.js';
 
 // Synthetic relayed-blocker example, not a private conversation transcript.
 const original='卡点：浏览器入口显示 authentication required。请解决这个问题';
@@ -36,8 +37,8 @@ test('user-owned long-term status and decisions remain extractable',()=>{
 });
 
 test('extraction system names relayed blockers without dropping genuine status examples',()=>{
-  assert.match(EXTRACTION_SYSTEM,/转述 agent 报告的卡点/);
-  assert.match(EXTRACTION_SYSTEM,/解决这个问题\/解决一下/);
-  assert.match(EXTRACTION_SYSTEM,/XX 已上线/);
-  assert.match(EXTRACTION_SYSTEM,/改用方案 B/);
+  assert.match(REVIEW_SYSTEM,/转述 agent 报告的卡点/);
+  assert.match(REVIEW_SYSTEM,/解决这个问题\/解决一下/);
+  assert.match(REVIEW_SYSTEM,/XX 已上线/);
+  assert.match(REVIEW_SYSTEM,/改用方案 B/);
 });

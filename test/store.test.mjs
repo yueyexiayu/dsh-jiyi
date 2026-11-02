@@ -122,6 +122,27 @@ test('Chinese keyword search, deletion removes vectors/FTS and historical eviden
   assert.throws(()=>s.putMemory(fact('revive',{id:m.id,expectedVersion:deleted.version})),/cannot be revived/);
 });
 
+test('essential selections persist, respect user control and enforce each project budget',t=>{
+  const f=fixture(t),s=f.store;
+  const p=s.resolveProject({path:'/tmp/jiyi-essential-a'});
+  const q=s.resolveProject({path:'/tmp/jiyi-essential-b'});
+  const global=s.putMemory(fact('全局偏好'));
+  const project=s.putMemory(fact('项目背景',{scope:'project',projectId:p.id}));
+  assert.equal(global.inclusion,'searchable');
+  assert.equal(s.setMemoryInclusion(global.id,'essential',{expectedRevision:0}).userControlled,true);
+  s.setMemoryInclusion(project.id,'essential',{expectedRevision:0,userControlled:false});
+  assert.deepEqual(s.listEssentialMemories({projectId:p.id}).map(x=>x.id).sort(),[global.id,project.id].sort());
+  assert.deepEqual(s.listEssentialMemories({projectId:q.id}).map(x=>x.id),[global.id]);
+  assert.throws(()=>s.setMemoryInclusion(global.id,'searchable',{userControlled:false}),/user controlled/);
+  assert.throws(()=>s.setMemoryInclusion(global.id,'searchable',{expectedRevision:0}),/conflict/);
+  const long=s.putMemory(fact('中'.repeat(2730),{scope:'project',projectId:p.id}));
+  assert.throws(()=>s.setMemoryInclusion(long.id,'essential'),/budget exceeded/);
+  assert.equal(s.getMemory(long.id).inclusion,'searchable');
+  assert.throws(()=>s.replaceMemory(global.id,fact('中'.repeat(2730)),{expectedVersion:1}),/budget exceeded/);
+  assert.equal(s.getMemory(global.id).content,'全局偏好');
+  assert.equal(f.restart().getMemory(global.id).inclusion,'essential');
+});
+
 test('queue is idempotent, leases survive restart and bounded retries become visible failures',t=>{
   const f=fixture(t),s=f.store;
   const job=s.enqueueEvent({sessionId:'s',eventSeq:1,eventTime:source.eventTime,payload:{text:'new event'},maxAttempts:2});

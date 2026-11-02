@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.21</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.22</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
-不必在每个新会话里重复交代项目约定。jiyi 会在用户回合正常完成后，后台提取**有明确来源的事实**；当新的相关输入到来，再按范围检索、独立判断支持度，补充原始记忆。它不是把全部历史塞进上下文，也不把“看起来相似”当作“足以支持回答”。
+不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；对话回合末尾可以展开查看已保存的变化。
+
+此版本使用独立的 `storages/jiyi-v2` 数据目录，从空记忆开始；旧 `storages/jiyi` 保留，不自动导入。首次启动沿用可读取的旧模型设置，不改变账号凭据。重要记忆的内容预算为 8192 UTF-8 字节，用户指定的分类和手写记忆不会被后台整理覆盖。后台失败会按队列重试，并可在面板查看。
 
 > [!NOTE]
 > **本地保存，不等于完全离线。** 记忆、索引与 Embedding 在本机；提取和相关性判断会将所需内容发送给你配置的 LLM 提供方，使用已有授权。
@@ -48,7 +50,7 @@
 <details>
 <summary><strong>设计边界：什么时候不会注入？</strong></summary>
 
-- 打开会话时不预载具体事实；真实的新用户输入才触发自动召回。
+- 新用户输入时载入当前范围的重要记忆，并触发普通记忆的自动召回。
 - 业务码不自动等于 HTTP 状态，表示约定不证明未记载的实现。明确否定、同义问法和混合问题中的已知部分可构成支持。
 - 幻造、重复、过期或非法引用会失败；超时和错误不冒充“无相关记忆”，不会退回到相似度直接注入。
 - 不把记忆中的命令当指令，不把助手推测当用户事实；同版本不重复注入，工具续步不递归召回。
@@ -107,7 +109,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.21**。
+- 确认 **Client / Host 均为 0.1.22**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
@@ -126,7 +128,7 @@ node -e "console.log(require.resolve('jiyi'))"
 <details>
 <summary><strong>数据位置与资源限制</strong></summary>
 
-- 数据与设置位于 `$DSH_HOME/storages/jiyi/`，目录/文件权限为0700/0600；不在 Git 仓库中。不要提交数据库、WAL、凭据、私人会话或原始评测记录。
+- 数据与设置位于 `$DSH_HOME/storages/jiyi-v2/`，目录/文件权限为0700/0600；不在 Git 仓库中。不要提交数据库、WAL、凭据、私人会话或原始评测记录。
 - API 为 `/api/jiyi`，走 DSH 正常认证；凭据保留在 Host，不发送到 Client。
 - 模型冷加载默认上限120秒，单次推理与召回默认10秒；同一 Host 复用存活的隔离 Embedding 子进程，最多并发2个请求。过载、取消、超时和释放失败明确报告。
 - 运行库锁定 `@huggingface/transformers@3.8.1`。模型、`node_modules` 与运行缓存不提交到 Git。

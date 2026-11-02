@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseExtraction, EXTRACTION_SYSTEM } from '../lib/extract.js';
+import { parseExtraction } from '../lib/extract.js';
+import { REVIEW_SYSTEM } from '../lib/review.js';
 
 // Synthetic task specification: no original conversation or private provenance.
 const original=readFileSync(new URL('./fixtures/task-synthetic.txt',import.meta.url),'utf8');
@@ -77,7 +78,7 @@ test('task filtering never hides malformed model output or fabricated quotes',()
 });
 
 test('extraction system explicitly separates task requirements from facts but retains explicit preferences and rules',()=>{
-  assert.match(EXTRACTION_SYSTEM,/任务说明或需求描述/);
-  assert.match(EXTRACTION_SYSTEM,/不得.*status/);
-  assert.match(EXTRACTION_SYSTEM,/明确.*偏好.*规则/);
+  assert.match(REVIEW_SYSTEM,/任务说明或需求描述/);
+  assert.match(REVIEW_SYSTEM,/不得.*status/);
+  assert.match(REVIEW_SYSTEM,/明确.*偏好.*规则/);
 });

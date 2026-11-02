@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { callExtraction } from '../lib/extract.js';
+import { callReview } from '../lib/review.js';
 import { createRelevanceJudge } from '../lib/relevance.js';
 import { searchMemories } from '../lib/search.js';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION, EMBEDDING_DIMENSIONS } from '../lib/models.js';
@@ -25,8 +25,8 @@ function modelFixture(answer) {
 }
 
 test('legacy queue identity stays out of model input without cost helpers',async()=>{
-  const f=modelFixture('{"memories":[]}');
-  await callExtraction(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sessionId:'actual-session',budgetTaskId:'old-task',sources:[{sessionId:'actual-session',eventSeq:1,quote:'test'}]});
+  const f=modelFixture('{"operations":[]}');
+  await callReview(f.ctx,f.helpers,{extraction:{provider:'fixture',model:'model'}},{sessionId:'actual-session',budgetTaskId:'old-task',sources:[{sessionId:'actual-session',eventSeq:1,quote:'test'}]});
   const {request}=f.requests[0];
   for(const key of ['sessionId','purpose','context','replayState'])assert.equal(Object.hasOwn(request,key),false);
   const input=JSON.parse(request.messages[0].content[0].text);assert.equal(Object.hasOwn(input,'sessionId'),false);assert.equal(Object.hasOwn(input.sources[0],'sessionId'),false);assert.equal(JSON.stringify(request).includes('actual-session'),false);

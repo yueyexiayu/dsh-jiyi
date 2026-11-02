@@ -17,7 +17,7 @@ function legacyState(version = '0.1.2') {
   return value;
 }
 function harness(handler = () => state()) {
-  let definition, plugin, body, tree, current, dirty = true;
+  let definition, plugin, body, tail, tree, current, dirty = true, tailProps = null;
   const instances = new Map(), calls = [], opened = [], registrations = [], effects = [], timers = new Map();
   const React = {
     createElement(type, props, ...children) { return { type, props: { ...props, children: children.flat(Infinity) } }; },
@@ -33,7 +33,7 @@ function harness(handler = () => state()) {
   vm.runInNewContext(code, { window: { location: { origin: 'http://127.0.0.1:57479' }, getComputedStyle: () => ({ visibility: cssVisible ? 'visible' : 'hidden' }), __ModuleLoader__: { load(value) { definition = value; } } }, document, IntersectionObserver, URL, AbortController, console, setInterval(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); }, fetch: async (url, options) => { const parsed = new URL(url, 'http://localhost'); const call = { url: parsed, options, op: parsed.searchParams.get('op'), body: options.body ? JSON.parse(options.body) : null }; calls.push(call); const result = await handler(call); return { ok: (result.httpStatus || 200) < 400, status: result.httpStatus || 200, json: async () => result }; } });
   plugin = definition.factory(name => { assert.equal(name, 'react'); return React; });
   const declared = Array.from(plugin.inject);
-  const services = { sidebarRightTabs: { register(value) { registrations.push(value); return () => {}; } }, slots: { inject(name, register) { return register(); }, register(options, component) { registrations.push(options); if (options.name === 'sidebar.right.pane.tab') body = component; return () => {}; } }, uiWorkspace: { openSession(id) { opened.push(id); } }, effect(fn) { fn(); } };
+  const services = { sidebarRightTabs: { register(value) { registrations.push(value); return () => {}; } }, slots: { inject(name, register) { return register(); }, register(options, component) { registrations.push(options); if (options.name === 'sidebar.right.pane.tab') body = component; if (options.name === 'conversation.chat.turnTail') tail = component; return () => {}; } }, uiWorkspace: { openSession(id) { opened.push(id); } }, effect(fn) { fn(); } };
   const context = new Proxy(services, { get(target, key) { if (key !== 'effect') assert.ok(declared.includes(key), `undeclared service ${String(key)}`); return target[key]; } });
   plugin.apply(context);
   function expand(node, path = 'root') {
@@ -48,7 +48,7 @@ function harness(handler = () => state()) {
     if (node.props.ref) node.props.ref.current = root;
     return { ...node, props: { ...node.props, children: (node.props.children || []).map((child, i) => expand(child, path + '/' + (child?.props?.key || i))) } };
   }
-  function render() { dirty = false; tree = expand(React.createElement(body, { useTabInfo: () => ({ tab: { sessionId: 's1' } }) })); while (effects.length) effects.shift()(); return tree; }
+  function render() { dirty = false; tree = expand(tailProps ? React.createElement(tail, tailProps) : React.createElement(body, { useTabInfo: () => ({ tab: { sessionId: 's1' } }) })); while (effects.length) effects.shift()(); return tree; }
   function all(node = tree) { if (node == null || typeof node !== 'object') return []; return [node, ...(node.props.children || []).flatMap(child => all(child))]; }
   function text(node = tree) { if (node == null) return ''; if (typeof node !== 'object') return String(node); return (node.props.children || []).map(text).join(' '); }
   async function settle() { for (let i = 0; i < 6; i++) { if (dirty) render(); await new Promise(resolve => setImmediate(resolve)); } if (dirty) render(); }
@@ -56,7 +56,7 @@ function harness(handler = () => state()) {
   async function click(label) { const node = find(label); assert.equal(!!node.props.disabled, false, `${label} disabled`); await node.props.onClick?.(); await settle(); }
   async function change(label, value) { find(label).props.onChange({ target: { value } }); await settle(); }
   render();
-  return { plugin, calls, opened, registrations, timers, listeners, observers, settle, text, all, find, click, change, render, async setDocumentVisible(value) { document.hidden = !value; listeners.get('visibilitychange')?.(); await settle(); }, async setTabVisible(value) { tabVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async setCssVisible(value) { cssVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async poll() { for (const fn of timers.values()) await fn(); await settle(); }, async submit() { await all().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} }); await settle(); }, destroy() { for (const instance of instances.values()) for (const hook of instance.hooks) hook?.cleanup?.(); } };
+  return { plugin, calls, opened, registrations, timers, listeners, observers, settle, text, all, find, click, change, render, showTail(props) { tailProps = props; render(); }, async setDocumentVisible(value) { document.hidden = !value; listeners.get('visibilitychange')?.(); await settle(); }, async setTabVisible(value) { tabVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async setCssVisible(value) { cssVisible = value; for (const observer of observers) observer.fn(); await settle(); }, async poll() { for (const fn of timers.values()) await fn(); await settle(); }, async submit() { await all().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} }); await settle(); }, destroy() { for (const instance of instances.values()) for (const hook of instance.hooks) hook?.cleanup?.(); } };
 }
 
 test('creates global and project memories, preserves failed drafts and shows the full saved content', async () => {
@@ -117,9 +117,33 @@ test('registers isolated keyed jiyi tab and reads only declared services', async
   const app = harness(); await app.settle();
   assert.deepEqual(Array.from(app.plugin.inject), ['slots', 'sidebarRightTabs', 'uiWorkspace']);
   assert.equal(app.registrations[0].id, 'jiyi'); assert.equal(app.registrations[0].kind, 'jiyi');
-  assert.deepEqual(app.registrations.slice(1).map(x => [x.name, x.key]), [['sidebar.right.pane.tab', 'jiyi'], ['sidebar.right.pane.tab.title', 'jiyi']]);
+  assert.deepEqual(app.registrations.slice(1).map(x => [x.name, x.key || x.id]), [['sidebar.right.pane.tab', 'jiyi'], ['sidebar.right.pane.tab.title', 'jiyi'], ['conversation.chat.turnTail', 'jiyi']]);
   assert.match(app.text(), new RegExp('v' + versionRe)); assert.match(app.text(), /extract-test/); assert.match(app.text(), /embed-test/); assert.match(app.text(), /seq 42/); assert.match(app.text(), /用户明确表达的原话/);
   assert.doesNotMatch(app.text(), /其他会话不展示/); assert.equal(app.all().some(n => n.type === 'script'), false);
+  app.destroy();
+});
+
+test('lets the user choose whether a memory is always loaded', async () => {
+  const item = { ...memory, inclusion: 'searchable', userControlled: false, selectionRevision: 3 };
+  const app = harness(call => {
+    if (call.op === 'set-inclusion') { item.inclusion = call.body.inclusion; item.userControlled = true; item.selectionRevision++; return { ok: true }; }
+    return state({ memories: [item] });
+  });
+  await app.settle();
+  await app.change('记忆使用方式 m1', 'essential');
+  assert.deepEqual(app.calls.find(call => call.op === 'set-inclusion').body, { op: 'set-inclusion', id: 'm1', inclusion: 'essential', expectedRevision: 3 });
+  assert.match(app.text(), /由你指定/); assert.equal(app.find('记忆使用方式 m1').props.value, 'essential');
+  app.destroy();
+});
+
+test('shows committed changes in their matching conversation turn and refreshes', async () => {
+  let items = [];
+  const app = harness(call => call.op === 'changes' ? { ok: true, changes: [{ turn: 2, eventSeq: 20, items }, { turn: 3, eventSeq: 30, items: [{ type: 'added', id: 'other', content: '其他回合' }] }] } : state());
+  await app.settle(); app.showTail({ sessionId: 's1', turn: { turn: 2 } }); await app.settle();
+  assert.doesNotMatch(app.text(), /记忆：已变更/);
+  items = [{ type: 'added', id: 'm1', content: '偏好中文' }, { type: 'updated', id: 'm2', content: '项目事实' }];
+  await app.poll(); assert.match(app.text(), /记忆：已变更 2 条/); assert.match(app.text(), /新增：偏好中文/); assert.match(app.text(), /更新：项目事实/); assert.doesNotMatch(app.text(), /其他回合/);
+  assert.equal(app.calls.find(call => call.op === 'changes').url.searchParams.get('sessionId'), 's1');
   app.destroy();
 });
 

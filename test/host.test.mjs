@@ -92,7 +92,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
   const listeners=new Map(),effects=[],routes=new Map(),sessions=new Map();
   const session={id:`jiyi-test-${randomUUID()}`,header:{cwd:join(dir,'ProjectA'),origin:'user'}};sessions.set(session.id,session);
   const helper={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
-  let extractionCalls=0,relevanceCalls=0;
+  let extractionCalls=0,relevanceCalls=0,reviewGate=null;
   let judge=async payload=>payload.candidates.filter(c=>c.content==='用户长期偏好使用简体中文回答').map(({id,version})=>({id,version}));
   const prepareCall=async(config,signal,configure)=>{
     signal?.throwIfAborted();
@@ -108,8 +108,10 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
       } else {
         assert.ok(Array.isArray(payload.sources),'Extraction fixture requires explicit user sources');
         extractionCalls++;
-        result={memories:payload.sources.map(s=>({content:'用户长期偏好使用简体中文回答',type:'preference',scope:'global',factKey:'language',sourceSeqs:[s.eventSeq],quotes:[s.quote],supersedes:[]}))};
+        const previous=payload.existing?.find(m=>m.factKey==='language');
+        result={operations:[{type:previous?'update':'add',...(previous?{memoryId:previous.id}:{}),content:'用户长期偏好使用简体中文回答',kind:'preference',scope:'global',factKey:'language',inclusion:'searchable',sourceSeqs:payload.sources.map(s=>s.eventSeq),quotes:payload.sources.map(s=>s.quote)}]};
       }
+      if(request.messages[0].source?.kind==='plugin:jiyi:review' && reviewGate) await reviewGate();
       yield {type:'text-delta',index:0,text:JSON.stringify(result)};
       yield {type:'finish',reason:{kind:'stop'}};
     }};
@@ -122,7 +124,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
   const emit=e=>listeners.get('session/event')(session,e);
   const state=()=>request('state');
   const cleanup=async()=>{for(const dispose of effects.reverse())if(typeof dispose==='function')await dispose();if(removeOnCleanup)rmSync(dir,{recursive:true,force:true});};
-  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;}};
+  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;},setReviewGate:fn=>{reviewGate=fn;}};
 }
 
 test('Host provides paged historical failed jobs independent of the recent queue without changing records',async()=>{
@@ -392,6 +394,62 @@ async function seedPreference(f) {
   f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
   return until(async()=>{const s=await f.state();return s.queue.some(j=>j.status==='done')&&s.memories[0];});
 }
+
+test('essential memories enter context only in their global or current project scope',async()=>{
+  const f=await fixture();
+  try {
+    await seedPreference(f);
+    const project=(await f.state()).projects.find(p=>p.path===f.session.header.cwd);
+    const global=await f.request('createMemory',{scope:'global',content:'全局：使用中文'});
+    const local=await f.request('createMemory',{scope:'project',projectId:project.id,content:'项目 A：使用测试库甲'});
+    for(const made of [global,local]) {
+      assert.equal(made.ok,true);
+      assert.equal((await f.request('set-inclusion',{id:made.memory.id,inclusion:'essential',expectedRevision:made.memory.selectionRevision})).ok,true);
+    }
+    const pre=f.listeners.get('agent/pre-step'), signal=new AbortController().signal;
+    const prompt=async session=>{
+      const user={id:`scope-${session.id}`,role:'user',source:{kind:'user'},content:[{type:'text',text:'开始工作'}]};
+      const decision=await pre({agent:{session},signal},async()=>({kind:'enter',messages:[user]}));
+      return decision.messages.find(m=>m.source?.kind==='plugin:jiyi-essential')?.content[0].text ?? '';
+    };
+    const current=await prompt(f.session);
+    assert.match(current,/全局：使用中文/);assert.match(current,/项目 A：使用测试库甲/);
+    const other=await prompt({id:'other-project',header:{cwd:join(f.session.header.cwd,'..','ProjectB'),origin:'user'}});
+    assert.match(other,/全局：使用中文/);assert.doesNotMatch(other,/项目 A：使用测试库甲/);
+  } finally {await f.cleanup();}
+});
+
+test('review changes become visible only after commit and concurrent user selection is protected',async()=>{
+  const f=await fixture();
+  try {
+    const changes=async()=>await (await f.route.fetch(new Request(`http://local/api/jiyi?op=changes&sessionId=${f.session.id}`))).json();
+    let release, started;
+    const entered=new Promise(resolve=>{started=resolve;});
+    const gate=new Promise(resolve=>{release=resolve;});
+    f.setReviewGate(async()=>{started();await gate;});
+    f.emit(f.event(1,'user/message',{id:'first',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    await entered;
+    assert.deepEqual((await changes()).changes,[]);
+    release();f.setReviewGate(null);
+    const saved=await until(async()=>{const s=await f.state();return s.queue.some(j=>j.status==='done')&&s.memories[0];});
+    const committed=(await changes()).changes;
+    assert.equal(committed.length,1);assert.equal(committed[0].items[0].id,saved.id);assert.equal(committed[0].items[0].type,'added');
+    let releaseSecond,startedSecond;
+    const enteredSecond=new Promise(resolve=>{startedSecond=resolve;});
+    const secondGate=new Promise(resolve=>{releaseSecond=resolve;});
+    f.setReviewGate(async()=>{startedSecond();await secondGate;});
+    f.emit(f.event(3,'user/message',{id:'second',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]}));
+    f.emit(f.event(4,'turn/end',{turn:2,reason:{kind:'completed'}}));
+    await enteredSecond;
+    assert.equal((await f.request('set-inclusion',{id:saved.id,inclusion:'essential',expectedRevision:saved.selectionRevision})).ok,true);
+    releaseSecond();f.setReviewGate(null);
+    await until(async()=>{const s=await f.state();return s.queue.filter(j=>j.status==='done').length===2;});
+    const final=(await f.state()).memories.find(m=>m.id===saved.id);
+    assert.equal(final.version,saved.version);assert.equal(final.userControlled,true);assert.equal(final.inclusion,'essential');
+    assert.equal((await changes()).changes.length,1,'A rejected review must not publish a change');
+  } finally {await f.cleanup();}
+});
 
 test('Host keeps relevance failure explicit and retries only for a new genuine user message',async()=>{
   const f=await fixture();

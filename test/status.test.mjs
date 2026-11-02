@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { recallMessage, validateSettings } from '../lib/index.js';
 import { retrieve, statusTiming, renderMemoryContext } from '../lib/retrieve.js';
-import { parseExtraction, userSource, EXTRACTION_SYSTEM } from '../lib/extract.js';
+import { parseExtraction, userSource } from '../lib/extract.js';
+import { REVIEW_SYSTEM } from '../lib/review.js';
 import { MemoryStore } from '../lib/store.js';
 import { packRecall } from '../lib/search.js';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION, EMBEDDING_DIMENSIONS } from '../lib/models.js';
@@ -92,7 +93,7 @@ test('explicit new user status replaces the same stable key through existing ver
     response.memories[0].quotes=['助手猜测已经解决'];
     assert.throws(()=>parseExtraction(JSON.stringify(response),payload,[next]),{code:'EXTRACTION_EVIDENCE'});
     assert.equal(userSource({type:'assistant/message',data:{source:{kind:'assistant'},content:[{type:'text',text:quote}]}},'assistant'),null);
-    assert.match(EXTRACTION_SYSTEM,/用户自己明确给出的新状态/);
-    assert.match(EXTRACTION_SYSTEM,/同一 topic/);
+    assert.match(REVIEW_SYSTEM,/用户自己明确给出的新状态/);
+    assert.match(REVIEW_SYSTEM,/同一 topic/);
   } finally {store.close();assert.equal(dirname(resolve(dir)),resolve(tmpdir()));rmSync(dir,{recursive:true});}
 });

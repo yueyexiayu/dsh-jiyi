@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { callTextModel } from '../lib/llm.js';
-import { callExtraction } from '../lib/extract.js';
+import { callReview } from '../lib/review.js';
 
 const installed = process.versions.electron ? await import('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js') : null;
 class TestAssembler {
@@ -142,12 +142,12 @@ test('timeout/abort covers stuck preparation and stream; cannot return late succ
 });
 
 test('extraction delegates shared limits/signature and retains EXTRACTION error namespace', async () => {
-  const f = fixture([text('{"memories":[]}'), stop]);
-  assert.equal(await callExtraction(f.ctx, helpers, { extraction: config }, { sessionId: 'not-sdk-context', sources: [] }), '{"memories":[]}');
+  const f = fixture([text('{"operations":[]}'), stop]);
+  assert.equal(await callReview(f.ctx, helpers, { extraction: config }, { sessionId: 'not-sdk-context', sources: [] }), '{"operations":[]}');
   assert.equal(f.state.prepared.maxTokens, 4000);
   assert.equal(f.state.options.sessionId, undefined); assert.equal(f.state.options.purpose, undefined);
-  await assert.rejects(callExtraction(fixture([text(' '), stop]).ctx, helpers, { extraction: config }, {}), code('EXTRACTION_EMPTY'));
-  await assert.rejects(callExtraction(fixture([text('{}')]).ctx, helpers, { extraction: config }, {}), code('EXTRACTION_FINISH'));
-  await assert.rejects(callExtraction(fixture([]).ctx, helpers, { extraction: config }, { x: 'x'.repeat(131072) }), code('EXTRACTION_INPUT_TOO_LARGE'));
-  await assert.rejects(callExtraction(fixture([]).ctx, helpers, { extraction: {} }, {}), code('NOT_CONFIGURED'));
+  await assert.rejects(callReview(fixture([text(' '), stop]).ctx, helpers, { extraction: config }, {}), code('EXTRACTION_EMPTY'));
+  await assert.rejects(callReview(fixture([text('{}')]).ctx, helpers, { extraction: config }, {}), code('EXTRACTION_FINISH'));
+  await assert.rejects(callReview(fixture([]).ctx, helpers, { extraction: config }, { x: 'x'.repeat(131072) }), code('EXTRACTION_INPUT_TOO_LARGE'));
+  await assert.rejects(callReview(fixture([]).ctx, helpers, { extraction: {} }, {}), code('NOT_CONFIGURED'));
 });
