@@ -142,7 +142,7 @@ test('shows the latest committed changes above the input and isolates sessions',
   await app.settle(); app.showTail({ session: { sessionId: 's1' } }); await app.settle();
   assert.match(app.text(), /旧回合/);
   items = [{ type: 'added', id: 'm1', content: '偏好中文' }, { type: 'updated', id: 'm2', content: '项目事实' }];
-  await app.poll(); assert.match(app.text(), /记忆：已变更 2 条/); assert.match(app.text(), /新增：偏好中文/); assert.match(app.text(), /更新：项目事实/); assert.doesNotMatch(app.text(), /旧回合/);
+  await app.poll(); assert.match(app.text(), /记忆\s+已变更 2 条/); assert.match(app.text(), /新增：偏好中文/); assert.match(app.text(), /更新：项目事实/); assert.doesNotMatch(app.text(), /旧回合/);
   assert.equal(app.calls.find(call => call.op === 'changes').url.searchParams.get('sessionId'), 's1');
   assert.equal(app.all().find(node=>node.type==='details').props['data-jiyi-turn'], 2);
   app.showTail({ sessionId: 's2' }); assert.doesNotMatch(app.text(), /偏好中文|项目事实/); await app.settle();
