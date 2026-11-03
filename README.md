@@ -4,7 +4,7 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.25</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.26</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
@@ -42,7 +42,7 @@
 
 ![jiyi 工作流：用户证据经后台提取保存到本机；新的输入经过限定范围的混合检索、独立支持度判断，最终引用原始事实。](<docs/assets/workflow.zh-CN.svg>)
 
-1. **记录**：从用户明确表达的事实中提取记忆，不采用助手推测。
+1. **整理**：回合完成后，后台根据用户原文新增、更新或删除记忆，不采用助手推测；删除需要明确的纠正或撤销证据。
 2. **筛选**：先限定项目范围，再用本地索引与向量产生候选。
 3. **判断**：独立 LLM 判断原文对实际问项的支持度，严格验证逐字引用。
 4. **补充**：注入带来源的原始事实，作为参考而非新指令；不是生成一条“新事实”。
@@ -92,7 +92,7 @@ jiyi 作为 **desktop profile bundle** 加载。不要再用 `cordis.patch.yml` 
 
 在 `$DSH_HOME/profiles/desktop/package.json` **两处**都加上 `jiyi`：
 
-- `dependencies`：`"jiyi": "link:$DSH_HOME/plugins/jiyi"`
+- `dependencies`：填写展开后的插件绝对路径，例如 `"jiyi": "link:/Users/<用户名>/.dsh/plugins/jiyi"`。JSON 中的 `$DSH_HOME` 不会自动展开。
 - `dsh.profile.bundles`：字符串 `"jiyi"`，与包名相同
 
 然后在该 profile 目录安装依赖，并确认 `node_modules/jiyi` 能解析到插件：
@@ -109,7 +109,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.25**。
+- 确认 **Client / Host 均为 0.1.26**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
@@ -162,7 +162,7 @@ ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
 for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
 ```
 
-公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。相关性规则为 `jiyi-relevance-v7`，提取器为v4。
+公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。当前相关性规则为 `jiyi-relevance-v7`，后台记忆整理版本为 `jiyi-review-v1`。上表结果属于旧版本，不能视为当前版本的测试结果。
 
 </details>
 

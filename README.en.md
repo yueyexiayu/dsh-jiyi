@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.25</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.26</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. When relevant new input arrives, it retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+This version starts with an empty memory store in `storages/jiyi-v2`; the old `storages/jiyi` is retained and is not imported automatically. Readable old model settings are reused on first startup without changing account credentials. Essential memories have an 8192-byte UTF-8 content budget; background review does not override user-selected categories or handwritten memories. Failed background jobs are retried through the queue and can be inspected in the sidebar. Recent saved changes can be expanded above the conversation composer.
 
 > [!NOTE]
 > **Local storage does not mean fully offline.** Memories, indexes and embeddings stay local. Extraction and relevance checks send the necessary content to your configured LLM provider using your existing authorization.
@@ -40,7 +42,7 @@ For historical correction or cost-review pauses, jiyi recognizes continuation of
 
 ![jiyi workflow: user evidence is extracted and stored locally; new input triggers scoped hybrid retrieval, independent support checks and original-fact references.](<docs/assets/workflow.en.svg>)
 
-1. **Capture** explicit user facts, not assistant guesses.
+1. **Review** explicit user evidence after a completed turn to add, update or forget memories, not assistant guesses. Forgetting requires an explicit correction or retraction.
 2. **Retrieve** candidates through local indexes and embeddings after scope filtering.
 3. **Check** whether the original text supports the actual question, including literal quote validation.
 4. **Reference** original facts with provenance, as evidence rather than instructions—not as newly generated facts.
@@ -90,7 +92,7 @@ jiyi loads as a **desktop profile bundle**. Do not add a `cordis.patch.yml` `- i
 
 Add `jiyi` in **both** places in `$DSH_HOME/profiles/desktop/package.json`:
 
-- `dependencies`: `"jiyi": "link:$DSH_HOME/plugins/jiyi"`
+- `dependencies`: use the expanded absolute plugin path, for example `"jiyi": "link:/Users/<username>/.dsh/plugins/jiyi"`. JSON does not expand `$DSH_HOME`.
 - `dsh.profile.bundles`: the string `"jiyi"`, matching the package name
 
 Then install dependencies in that profile and confirm `node_modules/jiyi` resolves to the plugin:
@@ -107,7 +109,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.25**.
+- Confirm **Client / Host both report 0.1.26**.
 - Configure and separately verify extraction, embedding and relevance models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
@@ -160,7 +162,7 @@ ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
 for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
 ```
 
-Public fixtures are independent of private conversations. `evidence/` contains only an empty-directory placeholder; runtime outputs are ignored. The relevance rules are `jiyi-relevance-v7`; the extractor is v4.
+Public fixtures are independent of private conversations. `evidence/` contains only an empty-directory placeholder; runtime outputs are ignored. The current relevance rules are `jiyi-relevance-v7` and background memory review is `jiyi-review-v1`. The results above are historical and do not establish test results for the current version.
 
 </details>
 
