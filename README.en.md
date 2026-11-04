@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.27</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.28</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. When relevant new input arrives, it retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+With dshbot, private Bot sessions are excluded from automatic review and recall, and memories sourced from them are excluded from model retrieval. Queued work is deferred and existing data is not deleted. Requests sent before a privacy change cannot be recalled; deferred work may resume if protection is lifted.
 
 This version starts with an empty memory store in `storages/jiyi-v2`; the old `storages/jiyi` is retained and is not imported automatically. Readable old model settings are reused on first startup without changing account credentials. Essential memories have an 8192-byte UTF-8 content budget; background review does not override user-selected categories or handwritten memories. Failed background jobs are retried through the queue and can be inspected in the sidebar. Recent saved changes can be expanded above the conversation composer.
 
@@ -109,7 +111,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.27**.
+- Confirm **Client / Host both report 0.1.28**.
 - Configure and separately verify extraction, embedding and relevance models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 

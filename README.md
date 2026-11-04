@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.27</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.28</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+与 dshbot 同时使用时，私有 Bot 的会话不参与 jiyi 自动整理或召回；来源包含这些会话的旧记忆不会参与模型检索。已排队的任务会暂停，已有数据不会自动删除。隐私切换前已发送给模型的请求无法撤回；解除私有保护后，原先暂停的任务可能继续。
 
 此版本使用独立的 `storages/jiyi-v2` 数据目录，从空记忆开始；旧 `storages/jiyi` 保留，不自动导入。首次启动沿用可读取的旧模型设置，不改变账号凭据。重要记忆的内容预算为 8192 UTF-8 字节，用户指定的分类和手写记忆不会被后台整理覆盖。后台失败会按队列重试，并可在面板查看。
 
@@ -109,7 +111,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.27**。
+- 确认 **Client / Host 均为 0.1.28**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 

@@ -419,6 +419,86 @@ test('essential memories enter context only in their global or current project s
   } finally {await f.cleanup();}
 });
 
+test('private Bot sessions do not enqueue user turns or receive essential memory',async()=>{
+  const f=await fixture();
+  const key=Symbol.for('dshbot.private-session-checks');
+  const privateSession=id=>id===f.session.id;
+  globalThis[key] ??= new Set(); globalThis[key].add(privateSession);
+  try {
+    const made=await f.request('createMemory',{scope:'global',content:'公开的测试偏好'});
+    await f.request('set-inclusion',{id:made.memory.id,inclusion:'essential',expectedRevision:made.memory.selectionRevision});
+    const user={id:'private-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'私有内容'}]};
+    f.emit(f.event(1,'user/message',user));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const pre=f.listeners.get('agent/pre-step');
+    const decision={kind:'enter',messages:[user]};
+    const result=await pre({agent:{session:f.session},signal:new AbortController().signal},async()=>decision);
+    assert.deepEqual(result,decision);
+    assert.equal((await f.state()).queue.length,0);
+    assert.equal(f.getExtractionCalls(),0);
+  } finally {globalThis[key].delete(privateSession);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
+test('a queued review becomes private while in flight and cannot commit its response',async()=>{
+  const f=await fixture();
+  const key=Symbol.for('dshbot.private-session-checks');
+  let closed=false,release,entered;
+  const check=id=>closed && id===f.session.id;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{release=resolve;});
+  globalThis[key] ??= new Set();globalThis[key].add(check);
+  try {
+    f.setReviewGate(async()=>{entered();await gate;});
+    f.emit(f.event(1,'user/message',{id:'before-private',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    await started;closed=true;release();
+    const state=await until(async()=>{const s=await f.state();return s.queue.find(j=>j.error?.includes('PRIVATE_BOT'))&&s;});
+    assert.equal(state.memories.length,0);
+    assert.equal(state.queue[0].status,'pending');
+  } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
+test('existing memories with private Bot sources are excluded from ordinary recall',async()=>{
+  const f=await fixture();
+  const key=Symbol.for('dshbot.private-session-checks');
+  const check=id=>id==='private-origin';
+  globalThis[key] ??= new Set();globalThis[key].add(check);
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const seed=new MemoryStore((await f.state()).paths.database);
+    try {
+      const memory=seed.putMemory({scope:'global',content:'只属于私有 Bot 的测试内容',sources:[{...source,sessionId:'private-origin'}]});
+      seed.setMemoryInclusion(memory.id,'essential',{expectedRevision:memory.selectionRevision,userControlled:false});
+    } finally {seed.close();}
+    const user={id:'public-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'私有 Bot 的测试内容'}]};
+    const pre=f.listeners.get('agent/pre-step');
+    const result=await pre({agent:{session:f.session},signal:new AbortController().signal},async()=>({kind:'enter',messages:[user]}));
+    assert.equal(result.messages.some(m=>m.source?.kind?.startsWith('plugin:jiyi')),false);
+  } finally {globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
+test('review cannot commit when an existing memory source becomes private in flight',async()=>{
+  const f=await fixture();
+  const key=Symbol.for('dshbot.private-session-checks');
+  let closed=false,release,entered;
+  const check=id=>closed && id==='later-private';
+  const started=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{release=resolve;});
+  globalThis[key] ??= new Set();globalThis[key].add(check);
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const seed=new MemoryStore((await f.state()).paths.database);
+    try {seed.putMemory({scope:'global',content:'已有来源',sources:[{...source,sessionId:'later-private'}]});} finally {seed.close();}
+    f.setReviewGate(async()=>{entered();await gate;});
+    f.emit(f.event(1,'user/message',{id:'new-user',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    await started;closed=true;release();
+    const state=await until(async()=>{const s=await f.state();return s.queue.find(j=>j.error?.includes('PRIVATE_BOT'))&&s;});
+    assert.equal(state.memories.length,1);
+    assert.equal(state.queue[0].status,'pending');
+  } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
 test('review changes become visible only after commit and concurrent user selection is protected',async()=>{
   const f=await fixture();
   try {
