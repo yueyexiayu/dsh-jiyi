@@ -109,7 +109,9 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
         assert.ok(Array.isArray(payload.sources),'Extraction fixture requires explicit user sources');
         extractionCalls++;
         const previous=payload.existing?.find(m=>m.factKey==='language');
-        result={operations:[{type:previous?'update':'add',...(previous?{memoryId:previous.id}:{}),content:'用户长期偏好使用简体中文回答',kind:'preference',scope:'global',factKey:'language',inclusion:'searchable',sourceSeqs:payload.sources.map(s=>s.eventSeq),quotes:payload.sources.map(s=>s.quote)}]};
+        result=payload.kind==='lesson'
+          ? {lessons:[{content:'处理重复失败前先核对共同假设，并用真实检查证明。',scope:'project',factKey:'lessons:repeated-failure',confidence:0.9,sourceSeqs:payload.sources.map(s=>s.eventSeq),quotes:payload.sources.map(s=>s.quote)}]}
+          : {operations:[{type:previous?'update':'add',...(previous?{memoryId:previous.id}:{}),content:'用户长期偏好使用简体中文回答',kind:'preference',scope:'global',factKey:'language',inclusion:'searchable',sourceSeqs:payload.sources.map(s=>s.eventSeq),quotes:payload.sources.map(s=>s.quote)}]};
       }
       if(request.messages[0].source?.kind==='plugin:jiyi:review' && reviewGate) await reviewGate();
       yield {type:'text-delta',index:0,text:JSON.stringify(result)};
@@ -437,6 +439,55 @@ test('private Bot sessions do not enqueue user turns or receive essential memory
     assert.equal((await f.state()).queue.length,0);
     assert.equal(f.getExtractionCalls(),0);
   } finally {globalThis[key].delete(privateSession);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
+test('repeated high-signal tool failures automatically produce a source-bound lesson without editing code',async()=>{
+  const f=await fixture();
+  try {
+    const user={id:'lesson-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'请修复测试并验证。'}]};
+    f.emit(f.event(1,'user/message',user));
+    for(const seq of [2,4]) {
+      f.emit(f.event(seq,'tool/call',{turn:1,step:seq,callId:`call-${seq}`,name:'bash',arguments:JSON.stringify({command:'npm test'})}));
+      f.emit(f.event(seq+1,'tool/result',{turn:1,step:seq,error:{name:'Error',code:'TEST_FAILED'},message:{role:'tool',toolCallId:`call-${seq}`,isError:true,content:[{type:'text',text:'TEST_FAILED: expected OK'}]}}));
+    }
+    f.emit(f.event(6,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const state=await until(async()=>{const current=await f.state();const job=current.queue.find(item=>item.kind==='lesson');if(job?.status==='failed')throw new Error(job.error);return job?.status==='done'?current:null;});
+    const lesson=state.memories.find(memory=>memory.kind==='lesson');
+    assert.ok(lesson);
+    assert.match(lesson.content,/共同假设/);
+    assert.equal(lesson.scope,'project');
+    assert.ok(lesson.sources.filter(source=>source.evidence==='tool-error:bash').length>=2);
+    assert.ok(state.queue.some(item=>item.kind==='lesson'&&item.status==='done'));
+    assert.ok(state.models.lessons);
+  } finally {await f.cleanup();}
+});
+
+test('repeated ordinary tool errors do not become long-term lessons',async()=>{
+  const f=await fixture();
+  try {
+    const user={id:'ordinary-error-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'请检查这个文件。'}]};
+    f.emit(f.event(1,'user/message',user));
+    for(const seq of [2,4]) {
+      f.emit(f.event(seq,'tool/call',{turn:1,step:seq,callId:`read-${seq}`,name:'read',arguments:JSON.stringify({path:'/tmp/missing'})}));
+      f.emit(f.event(seq+1,'tool/result',{turn:1,step:seq,error:{name:'Error',code:'ENOENT'},message:{role:'tool',toolCallId:`read-${seq}`,isError:true,content:[{type:'text',text:'ENOENT: no such file'}]}}));
+    }
+    f.emit(f.event(6,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const state=await until(async()=>{const current=await f.state();if(current.queue.some(item=>item.kind==='extraction'&&item.status==='failed'))throw new Error(current.queue.find(item=>item.kind==='extraction'&&item.status==='failed').error);return current.queue.some(item=>item.kind==='extraction'&&item.status==='done')?current:null;});
+    assert.equal(state.queue.some(item=>item.kind==='lesson'),false);
+    assert.equal(state.memories.some(memory=>memory.kind==='lesson'),false);
+  } finally {await f.cleanup();}
+});
+
+test('an explicit user correction can create a lesson without waiting for a repeated tool failure',async()=>{
+  const f=await fixture();
+  try {
+    f.emit(f.event(1,'user/message',{id:'correction-user',role:'user',source:{kind:'user'},content:[{type:'text',text:'不对，你理解错了，我说的是保留原接口。'}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const state=await until(async()=>{const current=await f.state();const job=current.queue.find(item=>item.kind==='lesson');if(job?.status==='failed')throw new Error(job.error);return job?.status==='done'?current:null;});
+    const lesson=state.memories.find(memory=>memory.kind==='lesson');
+    assert.ok(lesson);
+    assert.ok(lesson.sources.some(source=>source.evidence==='user-correction'));
+  } finally {await f.cleanup();}
 });
 
 test('a queued review becomes private while in flight and cannot commit its response',async()=>{

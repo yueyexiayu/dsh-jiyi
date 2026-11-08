@@ -4,13 +4,13 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.28</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.29</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
-Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. When relevant new input arrives, it retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
 
 With dshbot, private Bot sessions are excluded from automatic review and recall, and memories sourced from them are excluded from model retrieval. Queued work is deferred and existing data is not deleted. Requests sent before a privacy change cannot be recalled; deferred work may resume if protection is lifted.
 
@@ -38,13 +38,18 @@ For historical correction or cost-review pauses, jiyi recognizes continuation of
 <td><strong>🔎 Local hybrid retrieval</strong><br/><br/>SQLite, FTS5 and 384-dimensional MiniLM vectors work together. Similarity produces candidates, not permission to inject.</td>
 <td><strong>🛠️ Automatic first</strong><br/><br/>Normal recall does not depend on the main model searching. <code>jiyi_search</code> is an explicit supplement. Errors and timeouts remain visible.</td>
 </tr>
+<tr>
+<td><strong>📚 Repeated-mistake lessons</strong><br/><br/>Extract only from trusted corrections, repeated failures and evidenced check failures. A lesson records the cause and future practice; it never edits code.</td>
+<td><strong>🔐 Source and privacy bounds</strong><br/><br/>Every lesson must quote real source events. Private Bot sessions, credentials and unverified guesses do not become durable lessons.</td>
+<td><strong>🎯 Future recall</strong><br/><br/>Lessons use the same project/global scope, relevance checks and source validation as ordinary memory.</td>
+</tr>
 </table>
 
 ## How it works
 
 ![jiyi workflow: user evidence is extracted and stored locally; new input triggers scoped hybrid retrieval, independent support checks and original-fact references.](<docs/assets/workflow.en.svg>)
 
-1. **Review** explicit user evidence after a completed turn to add, update or forget memories, not assistant guesses. Forgetting requires an explicit correction or retraction.
+1. **Review** explicit user evidence after a completed turn to add, update or forget facts. Explicit corrections, repeated high-signal failures, and review/test/build failures backed by real tool events can produce a separate lesson. One-off environment failures and assistant guesses are not durable lessons.
 2. **Retrieve** candidates through local indexes and embeddings after scope filtering.
 3. **Check** whether the original text supports the actual question, including literal quote validation.
 4. **Reference** original facts with provenance, as evidence rather than instructions—not as newly generated facts.
@@ -56,7 +61,7 @@ For historical correction or cost-review pauses, jiyi recognizes continuation of
 - A business code is not automatically an HTTP status. A representation convention does not prove an undocumented implementation. Explicit prohibitions, paraphrases and supported parts of mixed questions can provide evidence.
 - Fabricated, duplicate, stale or invalid references fail. Timeouts and errors do not become “no relevant memory,” and the system does not fall back to injecting on similarity alone.
 - Commands inside memories are not instructions, and assistant guesses are not user facts. The same version is not injected twice; tool continuations do not recursively trigger recall.
-- Corrections and deletions affect future recall, not text already present in existing conversations.
+- Corrections and deletions affect future recall, not text already present in existing conversations. Lessons record failure patterns and safer practice; they do not execute fixes.
 
 </details>
 
@@ -111,7 +116,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.28**.
+- Confirm **Client / Host both report 0.1.29**.
 - Configure and separately verify extraction, embedding and relevance models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
@@ -120,6 +125,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 | Setting | Default | Purpose |
 | :--- | :--- | :--- |
 | Extraction model | `deepseek-account/deepseek-flash` · 60000ms | Extract facts from explicit user evidence |
+| Lesson review | Enabled · second matching failure | Reuse the extraction model for source-bound lessons; save only, never edit code |
 | Relevance model | `deepseek-account/deepseek-flash` · 10000ms | Independently check candidate support |
 | Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | q8 CPU · 384 dimensions · local |
 | Candidates / final memories | At most 12 / 6 | Bound judgment and injection counts |
