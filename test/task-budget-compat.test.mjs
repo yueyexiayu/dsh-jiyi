@@ -41,7 +41,7 @@ test('native search works without cost attribution helpers',async()=>{
   const memory={id:'m1',version:1,status:'active',scope:'global',projectId:null,content:'weather preference',embedding:vector,embeddingModel:EMBEDDING_MODEL,embeddingVersion:EMBEDDING_VERSION};
   const models={getStatus:()=>({status:'ready'}),embed:async texts=>({vectors:texts.map(()=>vector),model:EMBEDDING_MODEL,version:EMBEDDING_VERSION})};
   const store={listProjects:()=>[],listCandidates:()=>[memory],searchText:()=>[],getMemory:()=>memory};
-  const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:0.2,statusStaleHours:72,timeoutMs:10000}};
+  const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:0.2,timeoutMs:10000}};
   const result=await searchMemories({query:'weather',store,settings,models,relevance,readOnly:true});
   assert.equal(result.status,'hit',JSON.stringify(result));
   const request=f.requests[0].request,payload=JSON.parse(request.messages[0].content[0].text);

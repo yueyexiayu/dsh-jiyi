@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.32</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.33</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+v0.1.33 adds versioned evidence and relations, structured decision logs, fact validity, isolated review conflicts, recall feedback and conservative offline consolidation that is off by default. The sidebar exposes evidence, inactive versions, pending review and decision history. A conflict cannot enter automatic recall until clear user evidence, an explicit time window and unchanged versions justify a decision.
 
 With dshbot, private Bot sessions are excluded from automatic review and recall, and memories sourced from them are excluded from model retrieval. Queued work is deferred and existing data is not deleted. Requests sent before a privacy change cannot be recalled; deferred work may resume if protection is lifted.
 
@@ -116,8 +118,8 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.32**.
-- Configure and separately verify extraction, embedding and relevance models.
+- Confirm **Client / Host both report 0.1.33** and Host reports `schemaVersion=4`.
+- Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
 ## Configuration
@@ -127,11 +129,12 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 | Extraction model | `deepseek-account/deepseek-flash` · 60000ms | Extract facts from explicit user evidence |
 | Lesson review | Enabled · second matching failure | Reuse the extraction model for source-bound lessons; save only, never edit code |
 | Relevance model | `deepseek-account/deepseek-flash` · 10000ms | Independently check candidate support |
+| Conflict adjudication | `deepseek-account/deepseek-flash` · 15000ms · fixed | Use a fixed route or freeze the current session's actual route; minimum confidence 0.85 |
+| Offline consolidation | Off by default · 50 memories · 24 hours · batch 5 | Separate from extraction; runs only in the background when the target Agent is idle |
 | Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | q8 CPU · 384 dimensions · local |
 | Candidates / final memories | At most 12 / 6 | Bound judgment and injection counts |
 | Semantic candidate threshold | `0.20` | Candidate generation only, not injection authorization |
 | Injection budget | 4000 UTF-8 bytes | Includes metadata, sources and wrapping |
-| Stale status age | 72 hours | Ranking penalty, not deletion |
 
 <details>
 <summary><strong>Data locations and resource limits</strong></summary>
@@ -139,7 +142,11 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 - Data and settings live in `$DSH_HOME/storages/jiyi-v2/`, outside Git, with directory/file modes 0700/0600. This version starts with empty memories; the previous directory is retained and not imported. Do not commit databases, WAL files, credentials, private conversations or raw evaluation records.
 - The management panel pages through every memory in batches of 200. Retrieval uses a 2000-record safety window before model work and reports the number omitted.
 - Automatic review and lesson evidence redact common credential formats before model submission. Deleting a manually created or corrected memory also removes its `manual:*` audit body.
-- Status memories use the latest user evidence as their last-verification time and support per-record validity windows. Similar statuses under a changed `factKey` must update the existing topic.
+- Validity distinguishes `as_of / interval / timeless / unknown`; `validTo` is exclusive. Migration retains `unknown` and never guesses dates or time zones from text. `lastConfirmedAt` comes only from the newest effective user or tool source and never uses `updatedAt` as a substitute.
+- Pending and expired memories are excluded from automatic recall, essential injection and ordinary tool search. Explicit history queries may still read superseded versions within project scope.
+- Every version records source locators and quote SHA-256, with `supports / contradicts / corrects / derived_from` relations written in the same transaction. Deletion clears content, quotes, candidate bodies and vectors while retaining version identity, source locators, relations, decisions and quote hashes.
+- Conflict candidates are separate from the extraction queue. Pending review never relaxes the fact-key uniqueness constraint. Missing routes, timeouts, invalid JSON, fabricated references, version races and privacy changes fail closed and remain visible.
+- Recall records expose explicit useful, irrelevant and wrong feedback only for an actually injected record in the same session. `explicit_wrong` creates review, never a direct content edit. Model feedback remains a soft signal and never claims observable causal use.
 - Provider timeouts, busy responses and 5xx failures use minute-scale backoff and cooldowns. Jobs retain structured stage, category, requestId and the last 20 attempts. Recall health is summarized by status, failure stage and latency, with no-hit treated as a normal zero-result decision.
 - `/api/jiyi` uses normal DSH authentication. Credentials stay in the Host, not the Client.
 - Default cold-load limit: 120 seconds. Default inference and recall limit: 10 seconds. A Host reuses a live isolated embedding subprocess, with at most 2 concurrent requests. Overload, cancellation, timeouts and cleanup failures are reported explicitly.
@@ -152,7 +159,8 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
-| 0.1.16 public-source regression · Node | **184 / 184** | Historical result: synthetic sources and controlled LLMs; actual local embeddings / SDK |
+| 0.1.33 public-source regression · Node | **301 / 301** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
+| 0.1.33 public-source regression · Electron | **303 / 303** | Installed SDK and real ToolRuntime; no failures, cancellations or skips |
 | 0.1.16 public-source regression · Electron | **186 / 186** | Historical result: actual installed SDK; no failures, cancellations or skips |
 | Fixed sample · Q13 | **First 5 / 5** | The specified local pre-publication evaluation |
 | Fixed sample · 36 cases | **36 / 36 × 2 rounds** | No previously correct positive became empty; not a universal guarantee |
@@ -174,7 +182,7 @@ ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
 for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
 ```
 
-Public fixtures are independent of private conversations. `evidence/` contains only an empty-directory placeholder; runtime outputs are ignored. The current relevance rules are `jiyi-relevance-v8` and background memory review is `jiyi-review-v2`. The results above are historical and do not establish test results for the current version.
+Public fixtures are independent of private conversations. `evidence/` contains only an empty-directory placeholder; runtime outputs are ignored. The current relevance rules are `jiyi-relevance-v9` and background memory review is `jiyi-review-v2`. Electron coverage uses the installed SDK and real ToolRuntime, but does not replace an isolated Host acceptance run for the sidebar and real SQLite flow.
 
 </details>
 
@@ -187,7 +195,7 @@ No. State polling pauses when the panel tab or document is hidden, but the Host 
 No. Automatic recall is the normal path; `jiyi_search` is an explicit supplementary entry point.
 
 **How do updates, migrations and removal work?**<br/>
-Back up the plugin and settings before updating. For a running SQLite database, use the backup API or a safe consistent backup. Do not assume a lossless migration from the old topics/inbox architecture merely because of the version number. Alias backfills use the [explicit migration script](<scripts/migrate-aliases.mjs>); inspect its plan and back up before applying it. Production memory is not silently rewritten.
+Back up the plugin and settings before updating. The v4 startup migration runs inside a SQLite transaction and creates a WAL-consistent `VACUUM INTO` backup before migrating v1/v2/v3. A failure closes the connection and restores the pre-migration backup. Migration drills and development acceptance must use a temporary data directory or copy, never the production `jiyi-v2` store. Alias backfills still use the [explicit migration script](<scripts/migrate-aliases.mjs>); inspect its plan and back up before applying it.
 
 To remove jiyi, drop it from desktop `package.json` `dependencies` and `dsh.profile.bundles`, delete the unused `node_modules/jiyi` link, and remove any desktop-patch config overlay for that id. Do not empty the whole patch. Then fully quit and reopen DSH. Retaining or deleting memory data is the user's choice.
 

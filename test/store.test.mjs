@@ -85,7 +85,7 @@ test('fact-key substitution is transactional and cannot replace across project/g
   const {store:s}=fixture(t);
   const p=s.resolveProject({path:'/tmp/jiyi-replace-project'});
   const a=s.putMemory(fact('Old preference',{factKey:'editor',embedding:[1,0],embeddingModel:'test'}));
-  const b=s.putMemory(fact('New preference',{factKey:'editor'}));
+  const b=s.putMemory(fact('New preference',{factKey:'editor',relation:'corrects'}));
   assert.equal(s.getMemory(a.id).status,'superseded');
   assert.equal(s.getMemory(a.id).supersededBy,b.id);
   assert.equal(s.getMemory(a.id).embedding,null);
@@ -93,12 +93,12 @@ test('fact-key substitution is transactional and cannot replace across project/g
   const before=s.getStatus();
   assert.throws(()=>s.putMemory(fact('Cross project replacement',{scope:'project',projectId:p.id,supersedes:b.id})),/another scope/);
   assert.deepEqual(s.getStatus(),before);
-  assert.throws(()=>s.putMemory(fact('Bad new key',{factKey:'editor',embedding:[0,0],embeddingModel:'test'})),/nonzero/);
+  assert.throws(()=>s.putMemory(fact('Bad new key',{factKey:'editor',relation:'corrects',embedding:[0,0],embeddingModel:'test'})),/nonzero/);
   assert.equal(s.getMemory(b.id).status,'active');
   assert.equal(s.searchText('New preference')[0].id,b.id);
   // A caller may handle a failed nested write and still commit other work.
   s.transaction(()=>{
-    assert.throws(()=>s.putMemory(fact('Nested broken substitution',{factKey:'editor',embedding:[0,0],embeddingModel:'test'})),/nonzero/);
+    assert.throws(()=>s.putMemory(fact('Nested broken substitution',{factKey:'editor',relation:'corrects',embedding:[0,0],embeddingModel:'test'})),/nonzero/);
     s.setMetadata('unrelated-commit',true);
   });
   assert.equal(s.getMetadata('unrelated-commit'),true);
@@ -200,25 +200,29 @@ test('queue is idempotent, leases survive restart and bounded retries become vis
   assert.throws(()=>f.store.retryJob(final.id),/Only failed/);
 });
 
-test('schema upgrade adds status TTL and structured queue diagnostics without losing data',t=>{
-  const f=fixture(t),memory=f.store.putMemory({...fact('version one memory'),kind:'status',statusTtlHours:24});
+test('schema upgrade adds v4 evidence, validity, review and queue structures without losing data',t=>{
+  const f=fixture(t),memory=f.store.putMemory({...fact('version one memory'),kind:'status'});
   f.store.close();
   const db=new DatabaseSync(f.path);
   try {
     db.exec('ALTER TABLE memories DROP COLUMN status_ttl_hours; ALTER TABLE queue DROP COLUMN failure; ALTER TABLE queue DROP COLUMN attempt_history; PRAGMA user_version=1;');
   } finally {db.close();}
   const upgraded=f.restart();
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version,3);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version,4);
   assert.equal(upgraded.getMemory(memory.id).content,'version one memory');
   assert.equal(upgraded.getJob('missing'),null);
   assert.equal(upgraded.db.prepare('PRAGMA table_info(memories)').all().some(row=>row.name==='status_ttl_hours'),true);
+  assert.equal(upgraded.db.prepare('PRAGMA table_info(memories)').all().some(row=>row.name==='validity_kind'),true);
+  assert.equal(upgraded.getMemory(memory.id).validityKind,'unknown');assert.equal(upgraded.getMemory(memory.id).reviewState,'clear');
+  assert.ok(upgraded.db.prepare('SELECT count(*) n FROM memory_evidence WHERE memory_id=?').get(memory.id).n>=1);
+  assert.ok(upgraded.db.prepare("SELECT count(*) n FROM memory_relations WHERE from_memory_id=? AND relation='supports'").get(memory.id).n>=1);
   assert.deepEqual(upgraded.db.prepare('PRAGMA table_info(queue)').all().filter(row=>['failure','attempt_history'].includes(row.name)).map(row=>row.name),['failure','attempt_history']);
 });
-test('changing a status into another kind clears its status TTL',t=>{
+test('changing a status into another kind preserves explicit time semantics',t=>{
   const {store:s}=fixture(t);
-  const status=s.putMemory({...fact('临时状态'),kind:'status',statusTtlHours:24});
+  const status=s.putMemory({...fact('临时状态'),kind:'status'});
   const decision=s.replaceMemory(status.id,fact('最终决定',{kind:'decision'}),{expectedVersion:status.version});
-  assert.equal(decision.kind,'decision');assert.equal(decision.statusTtlHours,null);
+  assert.equal(decision.kind,'decision');assert.notEqual(decision.validityKind,'unknown');
 });
 
 test('completeJob commits memory, vector, FTS, cursor and done state as one batch',t=>{
@@ -272,14 +276,14 @@ test('fact replacements respect actual source time, same-session seq, and deleti
   expectStale(()=>s.putMemory(fact('old explicit replacement',{sources:at('2026-10-24T01:00:00.000Z'),supersedes:latest.id})));
   expectStale(()=>s.replaceMemory(latest.id,fact('old correction',{sources:at('2026-10-24T01:00:00.000Z')}),{expectedVersion:1}));
   assert.equal(s.getMemory(latest.id).status,'active');
-  const cross=s.putMemory(fact('other session same time',{factKey:'latest',sources:at('2026-10-24T02:00:00.000Z',1,'different-session')}));
+  const cross=s.putMemory(fact('other session same time',{factKey:'latest',relation:'corrects',sources:at('2026-10-24T02:00:00.000Z',1,'different-session')}));
   assert.equal(cross.status,'active');
   f.setTime('2026-10-24T03:00:00.000Z');
   s.deleteMemory(cross.id);
   expectStale(()=>s.putMemory(fact('old queued resurrection',{factKey:'latest',sources:at('2026-10-24T02:59:59.999Z')})));
   expectStale(()=>s.putMemory(fact('same-time resurrection',{factKey:'latest',sources:at('2026-10-24T03:00:00.000Z')})));
   assert.equal(s.listCandidates().length,0);
-  const fresh=s.putMemory(fact('new explicit user statement after delete',{factKey:'latest',sources:at('2026-10-24T03:00:01.000Z')}));
+  const fresh=s.putMemory(fact('new explicit user statement after delete',{factKey:'latest',relation:'corrects',sources:at('2026-10-24T03:00:01.000Z')}));
   assert.equal(fresh.status,'active');
   assert.throws(()=>s.putMemory(fact('invalid source time',{sources:at('not-a-date')})),/eventTime/);
 });

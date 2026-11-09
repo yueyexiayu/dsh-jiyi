@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.32</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.33</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.33 为记忆增加版本化证据与关系、结构化决策日志、事实有效期、待审冲突隔离、召回反馈和默认关闭的保守离线巩固。证据、失效版本、待审记忆与裁决过程都能在右侧栏查看；冲突未获得清晰用户证据和明确时间前不会进入自动召回。
 
 与 dshbot 同时使用时，私有 Bot 的会话不参与 jiyi 自动整理或召回；来源包含这些会话的旧记忆不会参与模型检索。已排队的任务会暂停，已有数据不会自动删除。隐私切换前已发送给模型的请求无法撤回；解除私有保护后，原先暂停的任务可能继续。
 
@@ -116,8 +118,8 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.32**。
-- 配置并分别验证提取、Embedding 与相关性模型。
+- 确认 **Client / Host 均为 0.1.33**，Host 报 `schemaVersion=4`。
+- 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
 ## 配置
@@ -127,11 +129,12 @@ node -e "console.log(require.resolve('jiyi'))"
 | 提取模型 | `deepseek-account/deepseek-flash` · 60000ms | 从明确用户证据中提取事实 |
 | 教训整理 | 启用 · 同类失败第 2 次 | 复用提取模型生成来源可追溯的 lesson；只保存，不自动改代码 |
 | 相关性模型 | `deepseek-account/deepseek-flash` · 10000ms | 独立判断候选对问项的支持度 |
+| 冲突裁决 | `deepseek-account/deepseek-flash` · 15000ms · fixed | 固定或冻结当前会话实际路由；最低置信度默认 0.85 |
+| 离线巩固 | 默认关闭 · 最少50条 · 24小时 · 单批5条 | 与提取队列分离；只在目标 Agent 空闲时后台运行 |
 | Embedding | `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | q8 CPU · 384维 · 本地运行 |
 | 候选 / 最终记忆 | 最多12 / 6条 | 限制进入判别和注入的条数 |
 | 候选语义阈值 | `0.20` | 只选候选，不授权注入 |
 | 注入预算 | 4000 UTF-8字节 | 包含元数据、来源和包装 |
-| 状态陈旧时间 | 72小时 | 降低排序，而非删除 |
 
 <details>
 <summary><strong>数据位置与资源限制</strong></summary>
@@ -139,7 +142,11 @@ node -e "console.log(require.resolve('jiyi'))"
 - 数据与设置位于 `$DSH_HOME/storages/jiyi-v2/`，目录/文件权限为0700/0600；不在 Git 仓库中。不要提交数据库、WAL、凭据、私人会话或原始评测记录。
 - 管理面板按 200 条分页加载全部记忆；进入模型检索前使用 2000 条安全窗口，并在诊断中报告被截断数量。
 - 自动整理和教训证据在发送模型前过滤常见凭据格式；删除手动新建或纠正的记忆时，同步清理对应 `manual:*` 审计正文。
-- 状态记忆按最新用户证据计算“最后确认时间”，支持逐条有效期；相同主题但更换 `factKey` 的高度相似新状态会被要求改为更新已有记忆。
+- 记忆有效期区分 `as_of / interval / timeless / unknown`，`validTo` 为不含端点；历史迁移保留 `unknown`，不从正文猜测日期或时区。`lastConfirmedAt` 只来自最新有效用户或工具来源，不使用 `updatedAt` 冒充确认时间。
+- 待审和已过期记忆不会进入自动召回、essential 注入或普通工具检索。普通历史查询仍可按项目范围读取替代版本。
+- 每条版本写入证据定位与 quote SHA-256，并在同一事务维护 `supports / contradicts / corrects / derived_from` 关系。删除会清空正文、quote、候选内容和向量，但保留版本身份、来源定位、关系、决策与 quote hash。
+- 冲突候选与提取队列分离。未裁决候选不会放宽事实键唯一索引；后台裁决缺失路由、超时、非法 JSON、虚构引用、版本竞态或隐私变化时保持隔离并记录真实失败。
+- 召回记录提供“有用 / 不相关 / 错误”反馈，只有实际注入的同一会话记录可以反馈；`explicit_wrong` 只会触发复核，不直接改写正文。模型反馈只作为软信号，不能冒充可观测的因果使用。
 - Provider 超时、繁忙和 5xx 使用分钟级退避与冷却；任务保留结构化阶段、错误类别、requestId 和最近 20 次尝试历史。召回面板按状态、失败阶段和延迟汇总，no-hit 明确视为正常零命中。
 - API 为 `/api/jiyi`，走 DSH 正常认证；凭据保留在 Host，不发送到 Client。
 - 模型冷加载默认上限120秒，单次推理与召回默认10秒；同一 Host 复用存活的隔离 Embedding 子进程，最多并发2个请求。过载、取消、超时和释放失败明确报告。
@@ -152,7 +159,8 @@ node -e "console.log(require.resolve('jiyi'))"
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
-| 0.1.16 公开源码回归 · Node | **184 / 184** | 历史结果：合成来源、受控 LLM，实际本地 Embedding / SDK |
+| 0.1.33 公开源码回归 · Node | **301 / 301** | 合成来源、受控 LLM，实际本地 Embedding / SDK |
+| 0.1.33 公开源码回归 · Electron | **303 / 303** | 安装包内实际 SDK 与真实 ToolRuntime；无失败、取消或跳过 |
 | 0.1.16 公开源码回归 · Electron | **186 / 186** | 历史结果：安装包内实际 SDK；无失败、取消或跳过 |
 | 固定样本 · Q13 | **首次5 / 5** | 发布前的指定本机实测 |
 | 固定样本 · 36题 | **36 / 36 × 2轮** | 未将旧正确应注入项变空；不是全场景保证 |
@@ -174,7 +182,7 @@ ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
 for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
 ```
 
-公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。当前相关性规则为 `jiyi-relevance-v8`，后台记忆整理版本为 `jiyi-review-v2`。上表结果属于旧版本，不能视为当前版本的测试结果。
+公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。当前相关性规则为 `jiyi-relevance-v9`，后台记忆整理版本为 `jiyi-review-v2`。Electron 测试覆盖安装包 SDK 与 ToolRuntime，但不能替代隔离 Host 中右侧栏和真实 SQLite 的运行验收。
 
 </details>
 
@@ -187,7 +195,7 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 不用。自动流程优先，`jiyi_search` 是显式检索的补充入口。
 
 **更新、迁移和卸载怎么做？**<br/>
-更新前备份插件与设置；运行中的 SQLite 使用 backup API 或安全一致性备份。从旧 topics/inbox 架构迁移，不可仅凭版本号假定无损。别名补登走 [显式迁移脚本](<scripts/migrate-aliases.mjs>)，先审阅计划和备份，不静默重写正式记忆。
+更新前备份插件与设置。v4 启动迁移在 SQLite 事务内执行，并在 v1/v2/v3 迁移前用 WAL 一致的 `VACUUM INTO` 备份；失败会关闭连接并恢复迁移前备份。迁移和开发验收必须使用临时 dataDir 或副本，不能拿正式 `jiyi-v2` 做演练。别名补登仍走 [显式迁移脚本](<scripts/migrate-aliases.mjs>)，先审阅计划和备份，不静默重写正式记忆。
 
 卸载时从 desktop `package.json` 的 `dependencies` 和 `dsh.profile.bundles` 去掉 `jiyi`，删除已无用途的 `node_modules/jiyi` 链接，并去掉 desktop patch 里对该 id 的 config 覆盖（若有）。不要清空整个 patch。然后完全退出/重开 DSH。记忆数据是否保留由用户决定。
 

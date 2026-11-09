@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { apply, validateSettings, recallMessage, VERSION, DEFAULT_SETTINGS } from '../lib/index.js';
+import { apply, validateSettings, recallMessage, currentSessionRoute, VERSION, DEFAULT_SETTINGS } from '../lib/index.js';
 import { parseExtraction, userSource, eligibleSession } from '../lib/extract.js';
 const installedTools = process.versions.electron ? await import('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js') : null;
 const installedLlm = process.versions.electron ? await import('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js') : null;
@@ -20,6 +20,13 @@ class FixtureTextAssembler {
 const deferred = () => { let resolve; const promise = new Promise(r=>{resolve=r;}); return {promise,resolve}; };
 
 const source = {sessionId:'test-source',eventId:'3',eventSeq:3,eventTime:'2026-10-24T01:00:00Z',quote:'我长期偏好使用简体中文回答。'};
+test('current-session route uses the executed request header and distinguishes explicit from adapter-default effort',()=>{
+  const session={requestHeader:()=>({config:{provider:'p',model:'m',reasoningEffort:'high'},adapterDefaults:{reasoningEffort:true}})};
+  const route=currentSessionRoute(session,{modelPolicy:'current-session',timeoutMs:12000});
+  assert.equal(route.provider,'p');assert.equal(route.model,'m');assert.equal(route.reasoningEffort,'high');assert.equal(route.effortSource,'adapter-default');assert.equal(route.modelPolicy,'current-session');assert.equal(route.timeoutMs,12000);assert.match(route.configHash,/^[a-f0-9]{64}$/);
+  session.requestHeader=()=>({config:{provider:'p',model:'m',reasoningEffort:'high'},adapterDefaults:{reasoningEffort:false}});assert.equal(currentSessionRoute(session).effortSource,'explicit');
+  assert.equal(currentSessionRoute({requestHeader:()=>undefined}),null);
+});
 test('extraction accepts only supported exact user evidence and rejects guessed sources',()=>{
   const payload={projectId:'p-a',projectNames:['ProjectA'],sources:[source]};
   const m={content:'用户希望简体中文回答',type:'preference',scope:'global',factKey:'language',sourceSeqs:[3],quotes:['我长期偏好使用简体中文回答。'],supersedes:[]};
@@ -108,7 +115,10 @@ test('legacy credential-shaped memory and source text never reach API, tools or 
 async function fixture({dataDir,removeOnCleanup=true}={}) {
   const dir=dataDir??mkdtempSync(join(tmpdir(),'jiyi-host-test-'));
   const listeners=new Map(),effects=[],routes=new Map(),sessions=new Map(),tools=new Map();
-  const session={id:`jiyi-test-${randomUUID()}`,header:{cwd:join(dir,'ProjectA'),origin:'user'}};sessions.set(session.id,session);
+  const session={id:`jiyi-test-${randomUUID()}`,header:{cwd:join(dir,'ProjectA'),origin:'user'}};
+  session.requestHeaderValue={config:{provider:'session-provider',model:'session-model',reasoningEffort:'high'},adapterDefaults:{reasoningEffort:false}};
+  session.requestHeader=()=>session.requestHeaderValue;
+  sessions.set(session.id,session);const agentStatuses=new Map();
   const helper={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
   let extractionCalls=0,relevanceCalls=0,reviewGate=null;
   let judge=async payload=>payload.candidates.filter(c=>c.content==='用户长期偏好使用简体中文回答').map(({id,version})=>({id,version}));
@@ -136,7 +146,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
       yield {type:'finish',reason:{kind:'stop'}};
     }};
   };
-  const ctx={connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helper},llm:{prepareCall},agents:{get:()=>null},sessions:{get:id=>sessions.get(id)},sessionPersistence:{open:async()=>{throw new Error('No stored test session');}},tools:{register:definition=>{tools.set(definition.name,definition);assert.equal(typeof definition.output?.render,'function','current Host requires tool output.render');assert.deepEqual(definition.output.schema,{type:'object'});if(installedTools){installedTools.assertSupportedJsonSchema(definition.parameters);installedTools.ToolRuntime.prototype.register.call({ctx:{},layers:{effect:(_ctx,fn)=>fn({tools:{insert:()=>()=>{}}})}},definition);}}},logger:{error:()=>{}},on:(name,fn)=>{listeners.set(name,fn);return ()=>{};},effect:fn=>{effects.push(fn());}};
+  const ctx={connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helper},llm:{prepareCall},agents:{get:id=>agentStatuses.has(id)?{status:agentStatuses.get(id)}:null,withoutInitiator:operation=>operation()},sessions:{get:id=>sessions.get(id)},sessionPersistence:{open:async()=>{throw new Error('No stored test session');}},tools:{register:definition=>{tools.set(definition.name,definition);assert.equal(typeof definition.output?.render,'function','current Host requires tool.output.render');assert.deepEqual(definition.output.schema,{type:'object'});if(installedTools){installedTools.assertSupportedJsonSchema(definition.parameters);installedTools.ToolRuntime.prototype.register.call({ctx:{},layers:{effect:(_ctx,fn)=>fn({tools:{insert:()=>()=>{}}})}},definition);}}},logger:{error:()=>{}},on:(name,fn)=>{listeners.set(name,fn);return ()=>{};},effect:fn=>{effects.push(fn());}};
   await apply(ctx,{dataDir:dir});
   const route=routes.get('/api/jiyi');
   const request=async(op,body)=>{const req=body?new Request('http://local/api/jiyi',{method:'POST',body:JSON.stringify({op,...body})}):new Request(`http://local/api/jiyi?op=${op}&sessionId=${session.id}`); const res=await route.fetch(req); return res.json();};
@@ -144,7 +154,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
   const emit=e=>listeners.get('session/event')(session,e);
   const state=()=>request('state');
   const cleanup=async()=>{for(const dispose of effects.reverse())if(typeof dispose==='function')await dispose();if(removeOnCleanup)rmSync(dir,{recursive:true,force:true});};
-  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,tool:name=>tools.get(name),getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;},setReviewGate:fn=>{reviewGate=fn;}};
+  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,tool:name=>tools.get(name),getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;},setReviewGate:fn=>{reviewGate=fn;},setAgentStatus:(id,status)=>agentStatuses.set(id,status)};
 }
 
 test('Host provides paged historical failed jobs independent of the recent queue without changing records',async()=>{
@@ -287,40 +297,141 @@ test('Host GET search supports absent session context without SQLite binding err
   } finally {await f.cleanup();}
 });
 
-test('saved statusStaleHours persists through complete plugin disposal/reapply and changes actual search order, then restores 72',async()=>{
-  const {MemoryStore}=await import('../lib/store.js');
-  const {EMBEDDING_MODEL,EMBEDDING_VERSION,EMBEDDING_DIMENSIONS}=await import('../lib/models.js');
+test('v4 adjudication and consolidation settings persist while legacy status timing is discarded',async()=>{
   let f=await fixture({removeOnCleanup:false}),dir;
   try {
     const state=await f.state();dir=state.paths.dataDir;
-    let stamp=new Date(Date.now()-80*3600000).toISOString();
-    const seed=new MemoryStore(state.paths.database,{clock:()=>stamp});
-    try {
-      const base={scope:'global',kind:'status',content:'持久化排序基准状态等待核实',embedding:Array.from({length:EMBEDDING_DIMENSIONS},(_,i)=>i===0?1:0),embeddingModel:EMBEDDING_MODEL,embeddingVersion:EMBEDDING_VERSION};
-      seed.putMemory({...base,id:'a-aging-status',sources:[{...source,eventTime:stamp}]});
-      stamp=new Date().toISOString();seed.putMemory({...base,id:'b-fresh-status',sources:[{...source,eventTime:stamp}]});
-    } finally {seed.close();}
-    const ttl=await f.request('setStatusTtl',{id:'a-aging-status',statusTtlHours:96});assert.equal(ttl.memory.statusTtlHours,96);
-    assert.equal((await f.request('setStatusTtl',{id:'a-aging-status',statusTtlHours:null})).memory.statusTtlHours,null);
-    const all=async({candidates})=>candidates.map(({id,version})=>({id,version}));
-    const search=async()=>{
-      f.setJudge(all);
-      const response=await f.route.fetch(new Request('http://local/api/jiyi?op=search&scope=global&query='+encodeURIComponent('持久化排序基准状态等待核实')));
-      const result=await response.json();assert.equal(result.status,'hit',JSON.stringify(result));return result;
-    };
-    assert.deepEqual((await search()).memories.map(m=>m.id),['b-fresh-status','a-aging-status']);
-    const next={...state.settings,retrieval:{...state.settings.retrieval,statusStaleHours:96}};
+    assert.equal(state.capabilities.schemaVersion,4);assert.equal(state.settings.consolidation.enabled,false);
+    const next={...state.settings,adjudication:{...state.settings.adjudication,minConfidence:.9},retrieval:{...state.settings.retrieval,statusStaleHours:96}};
     assert.equal((await f.request('settings',{settings:next})).ok,true);
-    assert.equal(JSON.parse(readFileSync(state.paths.settings,'utf8')).retrieval.statusStaleHours,96);
-    assert.deepEqual((await search()).memories.map(m=>m.id),['a-aging-status','b-fresh-status']);
-    await f.cleanup();f=null;
-    f=await fixture({dataDir:dir,removeOnCleanup:false});
-    const reopened=await f.state();assert.equal(reopened.settings.retrieval.statusStaleHours,96);
-    assert.deepEqual((await search()).memories.map(m=>m.id),['a-aging-status','b-fresh-status']);
-    assert.equal((await f.request('settings',{settings:{...reopened.settings,retrieval:{...reopened.settings.retrieval,statusStaleHours:72}}})).ok,true);
-    assert.equal(JSON.parse(readFileSync(reopened.paths.settings,'utf8')).retrieval.statusStaleHours,72);
-    assert.deepEqual((await search()).memories.map(m=>m.id),['b-fresh-status','a-aging-status']);
+    const persisted=JSON.parse(readFileSync(state.paths.settings,'utf8'));assert.equal(persisted.adjudication.minConfidence,.9);assert.equal(Object.hasOwn(persisted.retrieval,'statusStaleHours'),false);
+    await f.cleanup();f=null;f=await fixture({dataDir:dir,removeOnCleanup:false});
+    const reopened=await f.state();assert.equal(reopened.settings.adjudication.minConfidence,.9);assert.equal(Object.hasOwn(reopened.settings.retrieval,'statusStaleHours'),false);
   } finally {if(f)await f.cleanup();if(dir)rmSync(dir,{recursive:true,force:true});}
+});
+
+test('current-session adjudication freezes the actual request route on the durable extraction job',async()=>{
+  const f=await fixture();
+  try {
+    const changed={...DEFAULT_SETTINGS,adjudication:{...DEFAULT_SETTINGS.adjudication,modelPolicy:'current-session',timeoutMs:12000}};
+    assert.equal((await f.request('settings',{settings:changed})).ok,true);
+    let release,entered;const started=new Promise(resolve=>{entered=resolve;});const gate=new Promise(resolve=>{release=resolve;});
+    f.setReviewGate(async()=>{entered();await gate;});
+    f.emit(f.event(1,'user/message',{id:'route-user',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    await started;
+    const {MemoryStore}=await import('../lib/store.js');const store=new MemoryStore((await f.state()).paths.database);
+    try {const route=store.listJobs()[0].payload.route;assert.equal(route.provider,'session-provider');assert.equal(route.model,'session-model');assert.equal(route.reasoningEffort,'high');assert.equal(route.effortSource,'explicit');assert.equal(route.modelPolicy,'current-session');assert.equal(route.timeoutMs,12000);assert.match(route.configHash,/^[a-f0-9]{64}$/);} finally {store.close();}
+    release();f.setReviewGate(null);await until(async()=> (await f.state()).queue.some(job=>job.status==='done'));
+  } finally {await f.cleanup();}
+});
+
+test('background adjudication keeps a semantic conflict isolated, then applies an explicit newer user claim with a decision log',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),seed=new MemoryStore(state.paths.database);let target;
+    try {const project=seed.resolveProject({cwd:f.session.header.cwd});target=seed.putMemory({kind:'status',scope:'project',projectId:project.id,factKey:'page22-old',content:'第22页现场状态显示失败',sources:[{...source,eventTime:'2026-10-20T00:00:00Z'}]});} finally {seed.close();}
+    const original=f.ctx.llm.prepareCall;let release;const gate=new Promise(resolve=>{release=resolve;});
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{const call=await original(config,signal,configure),stream=call.stream;call.stream=async function*(request){const payload=JSON.parse(request.messages[0].content[0].text);let result;if(payload.group){const memory=payload.group.members.find(item=>item.kind==='memory'),candidate=payload.group.members.find(item=>item.kind==='candidate');await gate;result={decision:'same_claim_newer',confidence:.95,references:[{kind:'memory',id:memory.id,version:memory.version},{kind:'candidate',id:candidate.id,version:null}],reasonCode:'newer_user_evidence'};}else if(Array.isArray(payload.sources)){result={operations:payload.sources.map(item=>({type:'add',kind:'status',scope:'project',content:item.quote,factKey:'page22-current',sourceSeqs:[item.eventSeq],quotes:[item.quote]}))};}else return yield* stream(request);yield {type:'text-delta',index:0,text:JSON.stringify(result)};yield {type:'finish',reason:{kind:'stop'}};};return call;};
+    const quote='第22页现场状态已经恢复通过';
+    f.emit(f.event(1,'user/message',{id:'adjudication-user',role:'user',source:{kind:'user'},content:[{type:'text',text:quote}]}));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const held=await until(async()=>{const current=await f.state();return current.queue.some(job=>job.status==='done')&&current.conflicts.length===1&&current;});
+    assert.equal(held.memories.find(item=>item.id===target.id).reviewState,'pending');assert.equal(held.memories.some(item=>item.content===quote),false);
+    release();const resolved=await until(async()=>{const current=await f.state();return current.ok===true&&current.conflicts?.[0]?.state==='resolved'&&current;});
+    assert.equal(resolved.memories.find(item=>item.id===target.id).status,'superseded');const newer=resolved.memories.find(item=>item.content===quote);assert.equal(newer.status,'active');assert.ok(newer.decisions.some(item=>item.decisionType==='add'));assert.ok(resolved.conflicts[0].resolution==='same_claim_newer');
+  } finally {await f.cleanup();}
+});
+
+test('Host recall feedback is session-bound, requires injection and marks explicit wrong as pending review',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),store=new MemoryStore(state.paths.database);let memory,recall;
+    try {memory=store.putMemory({scope:'global',content:'反馈权限事实',sources:[source]});recall=store.recordRecall({sessionId:f.session.id,requestId:'feedback-request',status:'injected',memories:[memory]});} finally {store.close();}
+    const body={sessionId:f.session.id,recallId:recall.id,requestId:recall.requestId,memoryId:memory.id,version:memory.version,kind:'explicit_wrong'};
+    const wrongSession=await f.request('feedback',{...body,sessionId:'other-session'});assert.equal(wrongSession.ok,false);assert.match(wrongSession.error,/another session/);
+    const stale=await f.request('feedback',{...body,version:memory.version+1});assert.equal(stale.ok,false);assert.match(stale.error,/stale/);
+    const saved=await f.request('feedback',body);assert.equal(saved.ok,true,JSON.stringify(saved));
+    const after=await f.state();assert.equal(after.memories.find(item=>item.id===memory.id).reviewState,'pending');assert.ok(after.retrievals[0].feedback.some(item=>item.kind==='explicit_wrong'&&item.origin==='user'));
+  } finally {await f.cleanup();}
+});
+
+test('offline consolidation runs in a separate idle-only job and merges only normalized identical claims',async()=>{
+  const f=await fixture();
+  try {
+    const changed={...DEFAULT_SETTINGS,consolidation:{...DEFAULT_SETTINGS.consolidation,enabled:true,minMemories:2,batchSize:2,intervalHours:1}};
+    assert.equal((await f.request('settings',{settings:changed})).ok,true);
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),seed=new MemoryStore(state.paths.database);let pair;
+    try {pair=[seed.putMemory({scope:'global',content:'完全相同的巩固事实',factKey:'one',sources:[{...source,sessionId:f.session.id,eventId:'c1',eventSeq:10,evidence:'user-explicit'}]}),seed.putMemory({scope:'global',content:'完全相同的巩固事实',factKey:'two',sources:[{...source,sessionId:f.session.id,eventId:'c2',eventSeq:11,evidence:'user-explicit'}]})];} finally {seed.close();}
+    f.setAgentStatus(f.session.id,'idle');
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{const {provider,model,...controls}=config;const selected=configure?configure(controls,{reasoning:{efforts:[{id:'minimal'}]}}):controls;return {config:{provider,model,...selected},stream:async function*(request){assert.deepEqual(request.tools,[]);assert.equal(request.sessionId,undefined);const payload=JSON.parse(request.messages[0].content[0].text);assert.ok(Array.isArray(payload.memories));yield {type:'text-delta',index:0,text:JSON.stringify({decision:'merge_same_claim',confidence:.95,references:payload.memories.map(({id,version})=>({kind:'memory',id,version})),reasonCode:'identical_claim'})};yield {type:'finish',reason:{kind:'stop'}};}};};
+    assert.equal((await f.request('consolidation-trigger',{})).ok,true);
+    const done=await until(async()=>{const current=await f.state();return current.consolidationJobs.some(job=>job.state==='done')&&current;},20000);
+    const active=done.memories.filter(item=>item.status==='active'),superseded=done.memories.filter(item=>item.status==='superseded');assert.equal(active.length,1);assert.equal(superseded.length,1);assert.equal(active[0].content,'完全相同的巩固事实');assert.ok(done.consolidationJobs.some(job=>job.result?.changed===true));assert.equal(done.counts.queue.pending,0);
+  } finally {await f.cleanup();}
+});
+
+test('offline consolidation keeps low-confidence model proposals isolated for review',async()=>{
+  const f=await fixture();
+  try {
+    const changed={...DEFAULT_SETTINGS,consolidation:{...DEFAULT_SETTINGS.consolidation,enabled:true,minMemories:2,batchSize:1,intervalHours:1}};
+    assert.equal((await f.request('settings',{settings:changed})).ok,true);
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),seed=new MemoryStore(state.paths.database);let pair;
+    try {pair=[seed.putMemory({scope:'global',content:'低置信度巩固事实',factKey:'low-one',sources:[{...source,sessionId:f.session.id,eventId:'l1',eventSeq:10,evidence:'user-explicit'}]}),seed.putMemory({scope:'global',content:'低置信度巩固事实',factKey:'low-two',sources:[{...source,sessionId:f.session.id,eventId:'l2',eventSeq:11,evidence:'user-explicit'}]})];} finally {seed.close();}
+    f.setAgentStatus(f.session.id,'idle');
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{
+      const {provider,model,...controls}=config,selected=configure?configure(controls,{reasoning:{efforts:[{id:'minimal'}]}}):controls;
+      return {config:{provider,model,...selected},stream:async function*(request){
+        const payload=JSON.parse(request.messages[0].content[0].text);
+        yield {type:'text-delta',index:0,text:JSON.stringify({decision:'merge_same_claim',confidence:0,references:payload.memories.map(({id,version})=>({kind:'memory',id,version})),reasonCode:'low_confidence_claim'})};
+        yield {type:'finish',reason:{kind:'stop'}};
+      }};
+    };
+    assert.equal((await f.request('consolidation-trigger',{})).ok,true);
+    const done=await until(async()=>{const current=await f.state();return current.consolidationJobs.some(job=>job.state==='done'&&job.result?.modelDecision==='merge_same_claim')&&current;},20000);
+    assert.equal(done.memories.filter(item=>item.status==='active').length,2);assert.equal(done.memories.filter(item=>item.status==='superseded').length,0);assert.equal(done.conflicts.length,1);assert.equal(done.conflicts[0].reasonCode,'consolidation_low_confidence');assert.equal(done.consolidationJobs.find(job=>job.state==='done').result.decision,'needs_review');
+  } finally {await f.cleanup();}
+});
+
+test('offline consolidation pairs vector-similar facts with different stable keys',async()=>{
+  const f=await fixture();
+  try {
+    const changed={...DEFAULT_SETTINGS,consolidation:{...DEFAULT_SETTINGS.consolidation,enabled:true,minMemories:2,batchSize:1,intervalHours:1}};
+    assert.equal((await f.request('settings',{settings:changed})).ok,true);
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),seed=new MemoryStore(state.paths.database);
+    try {
+      seed.putMemory({scope:'global',content:'部署完成通知标题使用蓝色',factKey:'notice-blue',sources:[{...source,sessionId:f.session.id,eventId:'v1',eventSeq:20,evidence:'user-explicit'}],embedding:[1,0,0],embeddingModel:'test'});
+      seed.putMemory({scope:'global',content:'部署完成通知标题使用深蓝色',factKey:'notice-deep-blue',sources:[{...source,sessionId:f.session.id,eventId:'v2',eventSeq:21,evidence:'user-explicit'}],embedding:[0.99,0.1,0],embeddingModel:'test'});
+    } finally {seed.close();}
+    f.setAgentStatus(f.session.id,'idle');let called=0;
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{
+      const {provider,model,...controls}=config,selected=configure?configure(controls,{reasoning:{efforts:[{id:'minimal'}]}}):controls;
+      return {config:{provider,model,...selected},stream:async function*(request){
+        called++;const payload=JSON.parse(request.messages[0].content[0].text);
+        yield {type:'text-delta',index:0,text:JSON.stringify({decision:'keep_separate',confidence:.9,references:payload.memories.map(({id,version})=>({kind:'memory',id,version})),reasonCode:'different_colors'})};
+        yield {type:'finish',reason:{kind:'stop'}};
+      }};
+    };
+    assert.equal((await f.request('consolidation-trigger',{})).ok,true);
+    const done=await until(async()=>{const current=await f.state();return current.consolidationJobs.some(job=>job.state==='done')&&current;},20000);
+    assert.equal(called,1);assert.equal(done.consolidationJobs[0].result.decision,'keep_separate');assert.equal(done.memories.filter(item=>item.status==='active').length,2);
+  } finally {await f.cleanup();}
+});
+
+test('offline consolidation sends equal confirmation times to review instead of superseding',async()=>{
+  const f=await fixture();
+  try {
+    const changed={...DEFAULT_SETTINGS,consolidation:{...DEFAULT_SETTINGS.consolidation,enabled:true,minMemories:2,batchSize:1,intervalHours:1}};
+    assert.equal((await f.request('settings',{settings:changed})).ok,true);
+    const {MemoryStore}=await import('../lib/store.js');const state=await f.state(),seed=new MemoryStore(state.paths.database);
+    try {
+      for(const [id,key,eventId,eventSeq] of [['left','same-left','same-1',30],['right','same-right','same-2',31]]) seed.putMemory({scope:'global',content:'确认时间相同的巩固事实',factKey:key,sources:[{...source,sessionId:f.session.id,eventId,eventSeq,eventTime:'2026-10-24T01:00:00Z',evidence:'user-explicit'}]});
+    } finally {seed.close();}
+    f.setAgentStatus(f.session.id,'idle');
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{const {provider,model,...controls}=config,selected=configure?configure(controls,{reasoning:{efforts:[{id:'minimal'}]}}):controls;return {config:{provider,model,...selected},stream:async function*(request){const payload=JSON.parse(request.messages[0].content[0].text);yield {type:'text-delta',index:0,text:JSON.stringify({decision:'supersede_newer',confidence:.99,references:payload.memories.map(({id,version})=>({kind:'memory',id,version})),reasonCode:'newer_confirmed'})};yield {type:'finish',reason:{kind:'stop'}};}};};
+    assert.equal((await f.request('consolidation-trigger',{})).ok,true);
+    const done=await until(async()=>{const current=await f.state();return current.consolidationJobs.some(job=>job.state==='done')&&current;},20000);
+    assert.equal(done.memories.filter(item=>item.status==='active').length,2);assert.equal(done.memories.filter(item=>item.status==='superseded').length,0);assert.equal(done.consolidationJobs[0].result.changed,false);assert.equal(done.conflicts[0].reasonCode,'supersede_needs_review');
+  } finally {await f.cleanup();}
 });
 
 async function until(check,timeout=20000){const started=Date.now();while(Date.now()-started<timeout){const r=await check();if(r)return r;await new Promise(r=>setTimeout(r,25));}throw new Error('Test condition timeout');}
@@ -379,7 +490,7 @@ test('a failed extraction after a returned response uses a new durable attempt o
   } finally {await f.cleanup();}
 });
 
-test('a hidden status conflict is retried once with the actual target available to the review model',async()=>{
+test('a semantic conflict is staged once without blocking extraction or exposing pending recall',async()=>{
   const f=await fixture();
   try {
     const {MemoryStore}=await import('../lib/store.js');
@@ -411,10 +522,10 @@ test('a hidden status conflict is retried once with the actual target available 
     const user={id:'hidden-status-user',taskId:'hidden-status-task',role:'user',source:{kind:'user'},content:[{type:'text',text:quote}]};
     f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
     const done=await until(async()=>{const current=await f.state();return current.queue.some(job=>job.status==='done')&&current;});
-    assert.equal(calls,2);
+    assert.equal(calls,1);
     const updated=done.memories.find(memory=>memory.id===target.id);
-    assert.equal(updated.content,quote);assert.equal(updated.version,2);
-    assert.equal(done.memories.filter(memory=>memory.content===quote).length,1);
+    assert.equal(updated.content,target.content);assert.equal(updated.reviewState,'pending');assert.equal(updated.version,target.version);
+    assert.equal(done.conflicts.length,1);assert.equal(done.conflicts[0].members.some(member=>member.kind==='candidate'),true);
   } finally {await f.cleanup();}
 });
 
@@ -472,7 +583,7 @@ test('Host event→durable queue→real local embedding→automatic pre-step inj
     const injectedState=await f.state(),recall=injectedState.retrievals[0];
     assert.equal(recall.status,'injected');
     const diagnostics=recall.details.diagnostics;
-    assert.equal(diagnostics.relevance.version,'jiyi-relevance-v8');
+    assert.equal(diagnostics.relevance.version,'jiyi-relevance-v9');
     assert.deepEqual(diagnostics.relevance.grounding.items,[{id:s.memories[0].id,version:1,contentSha256:'f5ffb00a38b35e32ca7ec088aee4a977b9cc6700cf02b7e20a63bcc4d3d9e227',quoteSha256:'f5ffb00a38b35e32ca7ec088aee4a977b9cc6700cf02b7e20a63bcc4d3d9e227',quoteStart:0,quoteEnd:14,quoteBytes:42}]);
     assert.equal(injectedState.memories[0].content,'用户长期偏好使用简体中文回答','Existing full memory content must not be replaced by a quote');
     assert.equal(JSON.stringify(diagnostics).includes('用户长期偏好使用简体中文回答'),false,'New diagnostics must not retain a second quote/raw response copy');
@@ -662,7 +773,7 @@ test('review cannot commit when an existing memory source becomes private in fli
   } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
 });
 
-test('a conflict target added for a model retry cannot become private in flight unnoticed',async()=>{
+test('a conflict target that becomes private before staging keeps the extraction pending',async()=>{
   const f=await fixture();
   const key=Symbol.for('dshbot.private-session-checks');
   let closed=false,release,entered;
@@ -689,14 +800,9 @@ test('a conflict target added for a model retry cannot become private in flight 
         const payload=JSON.parse(request.messages[0].content[0].text);
         if(!Array.isArray(payload.sources)||payload.kind==='lesson') return yield* stream(request);
         calls++;
-        if(calls===1) {
-          const operation={type:'add',kind:'status',scope:'project',content:quote,factKey:'page22-current',sourceSeqs:payload.sources.map(item=>item.eventSeq),quotes:payload.sources.map(item=>item.quote)};
-          yield {type:'text-delta',index:0,text:JSON.stringify({operations:[operation]})};
-        } else {
-          assert.ok(payload.existing.some(memory=>memory.id===target.id));
-          entered();await gate;
-          yield {type:'text-delta',index:0,text:JSON.stringify({operations:[]})};
-        }
+        entered();await gate;
+        const operation={type:'add',kind:'status',scope:'project',content:quote,factKey:'page22-current',sourceSeqs:payload.sources.map(item=>item.eventSeq),quotes:payload.sources.map(item=>item.quote)};
+        yield {type:'text-delta',index:0,text:JSON.stringify({operations:[operation]})};
         yield {type:'finish',reason:{kind:'stop'}};
       };
       return call;
@@ -705,7 +811,7 @@ test('a conflict target added for a model retry cannot become private in flight 
     f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
     await started;closed=true;release();
     const result=await until(async()=>{const current=await f.state();return current.queue.find(job=>job.error?.includes('PRIVATE_BOT'))&&current;});
-    assert.equal(calls,2);assert.equal(result.queue[0].status,'pending');
+    assert.equal(calls,1);assert.equal(result.queue[0].status,'pending');assert.match(result.queue[0].error,/PRIVATE_BOT/);
   } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
 });
 

@@ -135,11 +135,11 @@ test('LLM diagnostics distinguish prepare/stream/assemble and exact SDK launch c
   assert.deepEqual(events.filter(e => e.status === 'success').map(e => e.stage), ['input', 'prepare', 'stream', 'assemble']);
   const counters = finalCounters(events);
   for (const key of ['prepareStarted', 'prepareSucceeded', 'streamStarted', 'finishStop']) assert.equal(counters[key], 1);
-  assert.equal(counters.reasoningEffort, 'minimal'); assert.equal(counters.usage, 'unknown');
+  assert.equal(counters.reasoningEffort, 'unknown'); assert.equal(counters.usage, 'unknown');
   const prepared = events.find(e => e.stage === 'stream' && e.status === 'running').metadata.preparedControls;
-  assert.deepEqual(prepared.values, { provider: 'fixture', model: 'fixture', maxTokens: 1024, reasoningEffort: 'minimal', temperature: null, topP: null, seed: null });
-  assert.deepEqual(prepared.observed, { provider: true, model: true, maxTokens: true, reasoningEffort: true, temperature: false, topP: false, seed: false });
-  assert.equal(prepared.selectedReasoningEffort, 'minimal'); assert.match(prepared.sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(prepared.values, { provider: 'fixture', model: 'fixture', maxTokens: 1024, reasoningEffort: null, temperature: null, topP: null, seed: null });
+  assert.deepEqual(prepared.observed, { provider: true, model: true, maxTokens: true, reasoningEffort: false, temperature: false, topP: false, seed: false });
+  assert.equal(prepared.selectedReasoningEffort, null); assert.match(prepared.sha256, /^[a-f0-9]{64}$/);
   assert.equal(counters.chunkCount, 2); assert.equal(counters.textBytes, Buffer.byteLength('private-memory-body'));
   safeEvents(events);
 });
@@ -220,7 +220,7 @@ test('singleton planner preserves the apple negative and exact singleton payload
   embeds = 0;
   const exact = await retrieve({ query: '`renderInvoice`', records: [row], projectId: 'synthetic-p', projectLabels: { 'synthetic-p': '合成项目' } }, fake, selector);
   assert.equal(embeds, 0); assert.equal(judges, 1);
-  assert.deepEqual(payload, { query: '`renderInvoice`', projectId: 'synthetic-p', candidates: [{ id: row.id, version: 1, scope: 'project', projectId: 'synthetic-p', projectName: '合成项目', content: row.content, updatedAt: undefined }] });
+  assert.deepEqual(payload, { query: '`renderInvoice`', projectId: 'synthetic-p', candidates: [{ id: row.id, version: 1, scope: 'project', projectId: 'synthetic-p', projectName: '合成项目', content: row.content, updatedAt: undefined, recordedAt: null, confirmedAgeHours: null, validTo: null, validityKind:'unknown', validityPrecision:'unknown', validityExpired:false, validityNotice:'（最后确认：未记录明确确认时间）' }] });
   assert.deepEqual(exact.hits.map(({ id, version }) => ({ id, version })), [{ id: row.id, version: 1 }]);
   assert.equal(exact.context, renderMemoryContext([row]));
   assert.equal(exact.hits[0].semanticScore, null); assert.equal(exact.hits[0].score, null);

@@ -37,11 +37,11 @@ function fixture(chunks, { prepare, stream, reasoning = { efforts: [{ id: 'minim
 }
 const code = expected => error => error.code === expected;
 
-test('one-shot prepared request preserves controls, lowest declared effort, tools:[] and isolated messages', async () => {
+test('one-shot prepared request preserves controls, explicit/default effort semantics, tools:[] and isolated messages', async () => {
   const f = fixture([text('{"ids":[]}'), stop]);
   assert.equal(await f.call(), '{"ids":[]}');
   assert.equal(f.state.calls, 1); assert.equal(f.state.prepared.maxTokens, 1024);
-  assert.equal(f.state.prepared.reasoningEffort, 'minimal'); assert.equal(f.state.options.temperature, .25);
+  assert.equal(Object.hasOwn(f.state.prepared,'reasoningEffort'),false); assert.equal(f.state.options.temperature, .25);
   assert.equal(f.state.options.signal, f.state.prepareSignal);
   assert.deepEqual(f.state.options.tools, []); assert.equal(f.state.options.messages.length, 1);
   for (const key of ['purpose', 'sessionId', 'context', 'replayState']) assert.equal(Object.hasOwn(f.state.options, key), false);
@@ -53,6 +53,9 @@ test('one-shot prepared request preserves controls, lowest declared effort, tool
     return { config: resolved, stream: async function* () { yield text('ok'); yield stop; } };
   };
   assert.equal(await noReasoning.call(), 'ok');
+  const explicit=fixture([text('ok'),stop]);assert.equal(await explicit.call({}, {...config,reasoningEffort:'high'}),'ok');assert.equal(explicit.state.prepared.reasoningEffort,'high');
+  const declaredDefault=fixture([text('ok'),stop],{reasoning:{efforts:[{id:'minimal'},{id:'high'}],defaultEffort:'high'}});assert.equal(await declaredDefault.call(),'ok');assert.equal(declaredDefault.state.prepared.reasoningEffort,'high');
+  const unsupported=fixture([text('ok'),stop]);await assert.rejects(unsupported.call({}, {...config,reasoningEffort:'max'}),code('LLM_CONFIG'));
 });
 
 test('evaluation capture excludes credential-shaped config, replay envelopes and reasoning; default trace remains body-free', async () => {

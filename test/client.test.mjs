@@ -8,7 +8,7 @@ const code = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8'
 const versionRe = VERSION.replaceAll('.', '\\.');
 const memory = { id: 'm1', content: '偏好中文 <script>不会执行</script>', scope: 'project', projectId: 'p1', type: 'preference', status: 'active', version: 2, createdAt: '2026-10-20T01:02:00Z', updatedAt: '2026-10-21T01:02:00Z', extractionModel: 'extract-test', embeddingModel: 'embed-test', embeddingVersion: 3, sources: [{ sessionId: 'origin-session', eventSeq: 42, quote: '用户明确表达的原话' }] };
 function state(overrides = {}) {
-  return { ok: true, version: VERSION, settings: { enabled: true, extraction: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 60000 }, embedding: { backend: 'local', model: 'local-test' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 10000 }, retrieval: { timeoutMs: 10000, maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72 }, queue: { maxAttempts: 3 } }, memories: [memory], projects: [{ id: 'p1', name: '测试项目' }], queue: [{ id: 'q1', sessionId: 's1', eventSeq: 9, status: 'failed', attempts: 2, error: '实际提取失败', updatedAt: '2026-10-21T00:00:00Z' }], retrievals: [{ sessionId: 's1', messageId: 'msg-1', status: 'timeout', query: '当前问题', memoryIds: [], error: '实际召回超时', createdAt: '2026-10-21T00:00:00Z' }, { sessionId: 'other', messageId: 'other-msg', status: 'hit', query: '其他会话不展示', memoryIds: ['m1'] }], models: { extraction: { status: 'not-verified' }, embedding: { status: 'not-verified' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', version: 'relevance-test-v1', status: 'not-verified', ready: false, activeRequests: 0, lastSuccessAt: null, error: null } }, ...overrides };
+  return { ok: true, version: VERSION, capabilities:{schemaVersion:4,reviewState:true,evidence:true,decisions:true,feedback:['explicit_useful','explicit_irrelevant','explicit_wrong'],conflicts:true,consolidation:true,operations:['feedback','resolveConflict','verifyAdjudication','consolidation-trigger']}, settings: { enabled: true, extraction: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 60000 }, lessons:{enabled:true,repeatedFailures:2,maxEvidenceChars:4000}, embedding: { backend: 'local', model: 'local-test',timeoutMs:10000,loadTimeoutMs:120000 }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', timeoutMs: 10000 }, retrieval: { timeoutMs: 10000, maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2 }, adjudication:{provider:'openai-codex',model:'gpt-6.1-sol',timeoutMs:15000,modelPolicy:'fixed',reasoningEffort:null,minConfidence:.85},consolidation:{enabled:false,minMemories:50,intervalHours:24,batchSize:5,timeoutMs:15000},feedback:{modelSamplingRate:0}, queue: { maxAttempts: 3 } }, memories: [memory], projects: [{ id: 'p1', name: '测试项目' }], queue: [{ id: 'q1', sessionId: 's1', eventSeq: 9, status: 'failed', attempts: 2, error: '实际提取失败', updatedAt: '2026-10-21T00:00:00Z' }], retrievals: [{ id:'r1',sessionId: 's1', requestId:'msg-1',messageId: 'msg-1', memoryRefs:[],feedback:[],status: 'timeout', query: '当前问题', memoryIds: [], error: '实际召回超时', createdAt: '2026-10-21T00:00:00Z' }, { id:'r2',sessionId: 'other', requestId:'other-msg',messageId: 'other-msg',memoryRefs:[],feedback:[],status: 'hit', query: '其他会话不展示', memoryIds: ['m1'] }], conflicts:[],consolidationJobs:[],consolidation:{status:'disabled'},models: { extraction: { status: 'not-verified' }, embedding: { status: 'not-verified' }, relevance: { provider: 'openai-codex', model: 'gpt-6.1-sol', version: 'relevance-test-v1', status: 'not-verified', ready: false, activeRequests: 0, lastSuccessAt: null, error: null },adjudication:{status:'not-verified'} }, ...overrides };
 }
 function legacyState(version = '0.1.2') {
   const value = state({ version });
@@ -156,13 +156,45 @@ test('lets the user choose whether a memory is always loaded', async () => {
   assert.match(app.text(), /由你指定/); assert.equal(app.find('记忆使用方式 m1').props.value, 'essential');
   app.destroy();
 });
-test('status memories expose an editable validity window', async () => {
-  const statusMemory={...memory,id:'status-memory',type:'status',content:'临时维护窗口',statusTtlHours:null};
-  const app=harness(call=>call.op==='setStatusTtl'?{ok:true,memory:{...statusMemory,statusTtlHours:call.body.statusTtlHours}}:state({memories:[statusMemory]}));
-  await app.settle();assert.match(app.text(),/状态有效期/);
-  await app.change('状态有效期 status-memory','24');
-  assert.deepEqual(app.calls.find(call=>call.op==='setStatusTtl').body,{op:'setStatusTtl',id:'status-memory',statusTtlHours:24});
-  assert.match(app.text(),/状态有效期已更新/);app.destroy();
+test('memory detail shows review state, validity, evidence relations and decision timeline', async () => {
+  const item={...memory,id:'status-memory',type:'status',content:'临时维护窗口',reviewState:'pending',validityKind:'interval',validFrom:'2026-10-20T00:00:00Z',validTo:'2026-10-25T00:00:00Z',validityPrecision:'day',timeZone:'Asia/Tokyo',lastConfirmedAt:'2026-10-21T00:00:00Z',evidence:[{id:'e1',evidenceKind:'user_statement',quote:'用户确认',quoteSha256:'a'.repeat(64),source:{sessionId:'origin-session',eventSeq:42}}],relations:[{id:'r1',relation:'supports',fromVersion:2,evidenceId:'e1',source:{sessionId:'origin-session',eventSeq:42}}],decisions:[{id:'d1',decisionType:'update',outcome:'applied',reasonCode:'corrected',shortReason:'证据更新',provider:'p',model:'m',reasoningEffort:'high',evidenceCount:1,createdAt:'2026-10-21T00:00:00Z'}]};
+  const app=harness(()=>state({memories:[item]}));await app.settle();
+  assert.match(app.text(),/复核 pending/);assert.match(app.text(),/有效期：interval/);assert.match(app.text(),/Asia\/Tokyo/);assert.match(app.text(),/证据关系 · 1/);assert.match(app.text(),/决策时间线 · 1/);assert.match(app.text(),/corrected/);
+  app.destroy();
+});
+
+test('recall records expose explicit feedback only for an injected recall', async () => {
+  const injected={id:'r-hit',sessionId:'s1',requestId:'req-hit',messageId:'req-hit',status:'injected',query:'问题',memoryIds:['m1'],memoryRefs:[{id:'m1',version:2}],feedback:[],createdAt:'2026-10-21T00:00:00Z'};
+  const app=harness(call=>call.op==='feedback'?{ok:true,feedback:[]}:state({retrievals:[injected]}));await app.settle();
+  await app.click('有用');
+  assert.deepEqual(app.calls.find(call=>call.op==='feedback').body,{sessionId:'s1',recallId:'r-hit',requestId:'req-hit',memoryId:'m1',version:2,kind:'explicit_useful',op:'feedback'});
+  assert.match(app.text(),/召回反馈已记录/);app.destroy();
+});
+
+test('open conflict groups render isolated members and allow an explicit distinct-claims decision', async () => {
+  const group={id:'g1',scope:'global',projectId:null,factKey:'key',state:'open',reasonCode:'fact_key_conflict',attempts:0,maxAttempts:3,route:{provider:'p',model:'m',reasoningEffort:'high',effortSource:'explicit'},members:[{kind:'memory',id:'old',version:1,memory:{content:'旧事实',reviewState:'pending'}},{kind:'candidate',id:'c1',candidate:{state:'pending',memory:{content:'新事实'}}}]};
+  const app=harness(call=>call.op==='resolveConflict'?{ok:true,conflict:{...group,state:'resolved'},memory:null}:state({conflicts:[group]}));await app.settle();
+  assert.match(app.text(),/待复核冲突 · 1/);assert.match(app.text(),/旧事实/);assert.match(app.text(),/新事实/);assert.match(app.text(),/p\/m · high · explicit/);
+  await app.click('判为不同事实');assert.deepEqual(app.calls.find(call=>call.op==='resolveConflict').body,{groupId:'g1',candidateId:'c1',decision:'distinct_claims',op:'resolveConflict'});assert.match(app.text(),/冲突组已处理/);app.destroy();
+});
+
+test('same-key conflict candidates cannot be labelled as separate facts', async () => {
+  const group={id:'g2',scope:'global',projectId:null,factKey:'key',state:'open',reasonCode:'fact_key_conflict',attempts:0,maxAttempts:3,route:{provider:'p',model:'m'},members:[{kind:'memory',id:'old',version:1,memory:{factKey:'key',content:'旧事实',reviewState:'pending'}},{kind:'candidate',id:'c2',candidate:{state:'pending',memory:{factKey:'key',content:'新事实'}}}]};
+  const app=harness(()=>state({conflicts:[group]}));await app.settle();
+  assert.equal(app.find('判为不同事实').props.disabled,true);app.destroy();
+});
+
+test('zero-candidate review groups expose an explicit close action', async () => {
+  const group={id:'g3',scope:'global',projectId:null,factKey:null,state:'open',reasonCode:'consolidation_needs_review',attempts:0,maxAttempts:3,route:{},members:[{kind:'memory',id:'old',version:1,memory:{content:'须人工复核的事实',reviewState:'pending'}}]};
+  const app=harness(call=>call.op==='resolveConflict'?{ok:true,conflict:{...group,state:'resolved'},memory:null}:state({conflicts:[group]}));await app.settle();
+  await app.click('判为不同事实');assert.deepEqual(app.calls.find(call=>call.op==='resolveConflict').body,{groupId:'g3',decision:'distinct_claims',op:'resolveConflict'});assert.match(app.text(),/冲突组已处理/);app.destroy();
+});
+
+test('triggering offline consolidation reports its actual operation', async () => {
+  const enabled=state();enabled.settings.consolidation.enabled=true;enabled.consolidation={status:'ready'};
+  const app=harness(call=>call.op==='consolidation-trigger'?{ok:true}:enabled);await app.settle();
+  await app.click('立即检查候选');
+  assert.match(app.text(),/已触发离线巩固检查/);app.destroy();
 });
 
 test('shows the latest committed changes above the input and isolates sessions', async () => {
@@ -280,7 +312,7 @@ test('changing a query while search is in flight discards stale results and rele
   assert.doesNotMatch(app.text(), /STALE RESULT/); assert.equal(app.find('检索').props.disabled, false); app.destroy();
 });
 
-test('statusStaleHours field saves the numeric setting and remount reloads it before restoring 72',async()=>{
+test('adjudication and consolidation settings persist from UI while legacy status setting stays removed',async()=>{
   let persisted=state();
   const handler=call=>{
     if(call.op==='settings') {persisted={...persisted,settings:structuredClone(call.body.settings)};return {ok:true,settings:persisted.settings};}
@@ -288,15 +320,11 @@ test('statusStaleHours field saves the numeric setting and remount reloads it be
   };
   let app=harness(handler);await app.settle();
   try {
-    await app.change('状态记忆降序时长（小时）','96');
-    assert.equal(JSON.parse(app.find('高级设置 JSON').props.value).retrieval.statusStaleHours,96);
+    await app.change('自动裁决最低置信度','0.9');await app.change('巩固间隔（小时）','12');
     await app.click('保存设置');
-    assert.equal(app.calls.find(c=>c.op==='settings').body.settings.retrieval.statusStaleHours,96);
-    assert.equal(persisted.settings.retrieval.statusStaleHours,96);
+    assert.equal(app.calls.find(c=>c.op==='settings').body.settings.adjudication.minConfidence,0.9);assert.equal(persisted.settings.consolidation.intervalHours,12);assert.equal(Object.hasOwn(persisted.settings.retrieval,'statusStaleHours'),false);
     app.destroy();app=harness(handler);await app.settle();
-    assert.equal(app.find('状态记忆降序时长（小时）').props.value,96);
-    await app.change('状态记忆降序时长（小时）','72');await app.click('保存设置');
-    assert.equal(persisted.settings.retrieval.statusStaleHours,72);
+    assert.equal(app.find('自动裁决最低置信度').props.value,0.9);assert.equal(app.find('巩固间隔（小时）').props.value,12);
   } finally {app.destroy();}
 });
 

@@ -28,7 +28,7 @@ test('empty searches distinguish unjudged paths from a validated judge rejection
   let calls = 0;
   const judge = { getStatus: () => ({ status: 'ready' }), judge: async () => { calls++; return { ids: [] }; } };
   const models = { ...adapter, getStatus: () => ({ status: 'ready' }) };
-  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72, timeoutMs: 10000 } };
+  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, timeoutMs: 10000 } };
   const search = records => searchMemories({ query: 'weather', settings, models, relevance: judge, readOnly: true, store: {
     listProjects: () => [], listCandidates: () => records, searchText: () => [], getMemory: id => records.find(record => record.id === id),
   } });
@@ -64,7 +64,7 @@ test('scope-empty and below-threshold searches skip the judge while preserving e
     embedCalls++;
     return { vectors: texts.map((_, i) => vector(i === 0 ? 0 : 1)), model: EMBEDDING_MODEL, version: EMBEDDING_VERSION };
   } };
-  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, statusStaleHours: 72, timeoutMs: 10000 } };
+  const settings = { enabled: true, retrieval: { maxMemories: 6, maxCandidates: 12, maxChars: 4000, semanticThreshold: 0.2, timeoutMs: 10000 } };
   const updates = [];
   const search = records => searchMemories({ query: 'weather', settings, models, relevance: judge, store: {
     listProjects: () => [], listCandidates: () => records, searchText: () => [],
@@ -91,7 +91,7 @@ test('oversized stores are deterministically bounded before retrieval instead of
   const records=Array.from({length:2100},(_,i)=>memory(`bounded-${i}`,'长期规则',{embedding:vector()}));
   const models={getStatus:()=>({status:'ready'}),embed:adapter.embed};
   const judge={getStatus:()=>({status:'ready'}),judge:async()=>({ids:[]})};
-  const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:.2,statusStaleHours:72,timeoutMs:10000}};
+  const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:.2,timeoutMs:10000}};
   const result=await searchMemories({query:'长期规则',settings,models,relevance:judge,readOnly:true,store:{
     listProjects:()=>[],listCandidates:()=>records.slice(0,2000),searchText:()=>[],countMemories:()=>records.length,getMemory:id=>records.find(record=>record.id===id),
   }});
@@ -206,11 +206,11 @@ test('precise function names outrank a semantically high distractor and respect 
 
 test('conservative packed-context budget includes metadata, escaping and wrapper; oversized hits are skipped', async () => {
   const records = [memory('huge', '中文偏好'.repeat(200)), memory('short', '偏好中文。')];
-  const full = await retrieveApproved({ query: '偏好', records, budgetTokens: 400, maxChars: 400 }, adapter);
+  const full = await retrieveApproved({ query: '偏好', records, budgetTokens: 600, maxChars: 600 }, adapter);
   assert.deepEqual(full.hits.map(x => x.id), ['short']);
   assert.equal(full.usedTokens, estimateTokens(full.context));
-  assert.ok(full.usedTokens <= 400);
-  assert.ok(full.context.length <= 400);
+  assert.ok(full.usedTokens <= 600);
+  assert.ok(full.context.length <= 600);
   assert.equal(full.diagnostics.budgetSkipped, 1);
   assert.deepEqual((await retrieveApproved({ query: '偏好', records, budgetTokens: 1 }, adapter)).hits, []);
   assert.equal(renderMemoryContext([]), '');

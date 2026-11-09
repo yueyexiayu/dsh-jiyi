@@ -63,7 +63,7 @@ test('an independent genuine status source in the same batch survives without ta
   const old={id:'old-state',scope:'project',projectId:'current-project',kind:'status',factKey:'page22'};
   const output=parse([memory(update,{sourceSeqs:[8,9],quotes:[problemQuotes[1],update],factKey:'page22'})],p,[old]);
   assert.equal(output.length,1);assert.deepEqual(output[0].sources.map(s=>s.eventSeq),[9]);
-  assert.equal(output[0].factKey,'page22');assert.deepEqual(output[0].supersedes,['old-state']);
+  assert.equal(output[0].factKey,'page22');assert.deepEqual(output[0].supersedes,[],'replacement is now decided by conflict handling, not parse-time guessing');
 });
 
 test('a separate short message declaring intent to execute requirements is not status evidence',()=>{

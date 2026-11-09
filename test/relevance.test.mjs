@@ -58,7 +58,7 @@ test('returns only exact id/version decisions, scope labels remain data, and SDK
 });
 
 test('v7 adds the approved denial contrast without losing the HTTP boundary, independence, partial support or quote guards', () => {
-  assert.equal(RELEVANCE_VERSION, 'jiyi-relevance-v8');
+  assert.equal(RELEVANCE_VERSION, 'jiyi-relevance-v9');
   assert.ok(RELEVANCE_SYSTEM.includes('否定问法对照（以下是合成例，不是候选事实）'));
   assert.ok(RELEVANCE_SYSTEM.includes('明确禁止就是对同一操作“能否”的直接否定证据'));
   assert.ok(RELEVANCE_SYSTEM.includes('不外推到其他操作或权限'));
