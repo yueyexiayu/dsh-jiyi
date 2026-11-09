@@ -16,22 +16,29 @@ const vector=Array.from({length:EMBEDDING_DIMENSIONS},(_,i)=>i===0?1:0);
 const adapter={embed:async texts=>({vectors:texts.map(()=>vector),model:EMBEDDING_MODEL,version:EMBEDDING_VERSION})};
 const make=(id,kind,age)=>({id,version:1,status:'active',scope:'global',kind,content:'第22页现场状态待核实',createdAt:new Date(Date.now()-age*3600000).toISOString(),sources:[source(new Date(Date.now()-age*3600000).toISOString(),'用户原文')],updatedAt:new Date().toISOString(),embedding:vector,embeddingModel:EMBEDDING_MODEL,embeddingVersion:EMBEDDING_VERSION});
 
-test('status time falls back createdAt -> updatedAt -> latest valid source, then explicit unknown',()=>{
+test('status time prefers latest valid evidence, then updated/created fallback, and honors per-status TTL',()=>{
   const createdAt='2026-10-20T00:00:00.000Z',updatedAt='2026-10-21T00:00:00.000Z';
   const m={...make('status','status',48.1),createdAt,updatedAt,sources:[source('invalid','原文'),source('2026-10-22T00:00:00Z','原文'),source('2026-10-23T00:00:00Z','原文')]};
   const now=Date.parse('2026-10-25T00:00:00Z');
-  assert.equal(statusTiming(m,now).recordedAt,createdAt);
-  assert.equal(statusTiming({...m,createdAt:'invalid'},now).recordedAt,updatedAt);
-  assert.equal(statusTiming({...m,createdAt:null,updatedAt:''},now).recordedAt,'2026-10-23T00:00:00.000Z');
+  assert.equal(statusTiming(m,now).recordedAt,'2026-10-23T00:00:00.000Z');
+  assert.equal(statusTiming({...m,sources:[]},now).recordedAt,updatedAt);
+  assert.equal(statusTiming({...m,sources:[],createdAt:'invalid'},now).recordedAt,updatedAt);
+  assert.equal(statusTiming({...m,sources:[],createdAt:'invalid',updatedAt:''},now).recordedAt,null);
   const unknown={...m,createdAt:undefined,updatedAt:'invalid',sources:[source('invalid','原文')]};
   assert.equal(statusTiming(unknown,now).recordedAt,null);
   assert.equal(statusTiming(unknown,now).statusAgeHours,null);
-  assert.match(statusTiming(unknown,now).statusNotice,/记录时间未知，请核实/);
-  assert.match(recallMessage([unknown],'request',x=>x,[]).content[0].text,/记录时间未知，请核实/);
-  assert.match(renderMemoryContext([unknown]),/记录时间未知，请核实/);
+  assert.equal(statusTiming(unknown,now).statusStale,true);
+  assert.match(statusTiming(unknown,now).statusNotice,/记录时间未知，按已过期待核实/);
+  assert.match(recallMessage([unknown],'request',x=>x,[]).content[0].text,/"statusStale":true/);
+  assert.match(renderMemoryContext([unknown]),/记录时间未知，按已过期待核实/);
   assert.deepEqual(statusTiming({...unknown,kind:'project_fact'}),{});
   const aged={...m,createdAt:'2026-10-23T00:00:00Z'};
-  assert.match(statusTiming(aged,now).statusNotice,/记录于 2 天前，可能已过时，请核实/);
+  assert.match(statusTiming(aged,now).statusNotice,/最后确认于 2 天前/);
+  assert.equal(statusTiming({...aged,statusTtlHours:24},now).statusStale,true);
+  assert.equal(statusTiming({...aged,statusTtlHours:96},now).statusStale,false);
+  const recent={...aged,createdAt:new Date(Date.now()-24*3600000).toISOString(),updatedAt:new Date(Date.now()-24*3600000).toISOString(),sources:[]};
+  assert.match(recallMessage([recent],'request',x=>x,[],48).content[0].text,/"statusStale":false/);
+  assert.match(recallMessage([recent],'request',x=>x,[],12).content[0].text,/"statusStale":true/);
 });
 
 test('timestamped reference returns the same snapshot that passed its complete byte budget',()=>{
@@ -53,6 +60,7 @@ test('stale status is demoted before the candidate cap but retained when capacit
   assert.equal(all.hits.at(-1).statusStale,true);
   const relaxed=await retrieve({...options,statusStaleHours:100},adapter,judge);
   assert.equal(relaxed.hits[0].id,'a-old','changing the setting reaches the actual ranking');
+  assert.doesNotMatch(relaxed.context,/"statusStale":true/);
   assert.equal(validateSettings({}).retrieval.statusStaleHours,72);
   for(const value of [0,-1,1.5,'72',87601]) assert.throws(()=>validateSettings({retrieval:{statusStaleHours:value}}),/statusStaleHours/);
 });
@@ -61,9 +69,11 @@ test('unknown-time status ranks exactly as stale, never refreshes or changes non
   const unknown={...make('a-unknown','status',1),createdAt:null,updatedAt:'invalid',sources:[]};
   const stale=make('b-stale','status',1000),fresh=make('c-fresh','status',1);
   const fact={...make('d-fact','project_fact',1),createdAt:null,updatedAt:null,sources:[]};
-  const judge={judge:async({candidates})=>({ids:candidates.map(({id,version})=>({id,version}))})};
+  let proposed;
+  const judge={judge:async({candidates})=>{proposed=candidates;return {ids:candidates.map(({id,version})=>({id,version}))};}};
   const options={query:'现场状态',records:[unknown,stale,fresh,fact],statusStaleHours:72,maxCandidates:4,budgetTokens:10000,maxChars:10000};
   const result=await retrieve(options,adapter,judge);
+  assert.equal(proposed.find(candidate=>candidate.id==='a-unknown').statusStale,true);
   assert.deepEqual(result.hits.map(m=>m.id),['c-fresh','d-fact','a-unknown','b-stale']);
   const byId=Object.fromEntries(result.hits.map(m=>[m.id,m]));
   assert.equal(byId['a-unknown'].score,byId['b-stale'].score);
@@ -90,6 +100,8 @@ test('explicit new user status replaces the same stable key through existing ver
     assert.equal(store.db.prepare('SELECT count(*) AS n FROM memory_fts WHERE memory_id=?').get(old.id).n,0);
     assert.deepEqual(store.listCandidates({projectId:project.id}).map(m=>m.id),[next.id]);
     assert.throws(()=>store.putMemory({...parsed,supersedes:[],content:'旧消息重放',sources:old.sources}),{code:'STALE_MEMORY_FACT'});
+    assert.equal(store.setStatusTtl(next.id,24).statusTtlHours,24);
+    assert.equal(store.setStatusTtl(next.id,null).statusTtlHours,null);
     response.memories[0].quotes=['助手猜测已经解决'];
     assert.throws(()=>parseExtraction(JSON.stringify(response),payload,[next]),{code:'EXTRACTION_EVIDENCE'});
     assert.equal(userSource({type:'assistant/message',data:{source:{kind:'assistant'},content:[{type:'text',text:quote}]}},'assistant'),null);

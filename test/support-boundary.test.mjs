@@ -77,7 +77,7 @@ test('grounding is exact metadata with first UTF16 range and independent UTF8 SH
     quoteSha256: 'ac1e3834fa959756b195de0adc687625bbb4b19ef634b71b06e846ceb3e81519',
     quoteStart: 1, quoteEnd: 4, quoteBytes: 5,
   }] });
-  assert.equal(result.version, 'jiyi-relevance-v7');
+  assert.equal(result.version, 'jiyi-relevance-v8');
   for (const value of [result, observed, f.judge.getStatus()]) {
     assert.equal(JSON.stringify(value).includes('😀Z'), false, 'New result/diagnostic fields must not retain raw quote');
     assert.equal(JSON.stringify(value).includes('"quote"'), false);

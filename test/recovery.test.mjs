@@ -309,7 +309,7 @@ test('startup recovery barrier preserves durable prefix before buffered live seq
   await f.stop();
 });
 
-test('closing Host aborts an active extraction and releases its lease before SQLite closes',async t=>{
+test('closing Host aborts an active extraction without consuming its attempt budget',async t=>{
   const w=workspace(t);let f;
   t.after(async()=>{await f?.stop();});
   f=await launch(w,{beforeExtraction:request=>new Promise((_,reject)=>{
@@ -323,13 +323,13 @@ test('closing Host aborts an active extraction and releases its lease before SQL
   w.db(s=>{
     const job=s.listJobs()[0];
     assert.equal(job.state,'pending');assert.equal(job.token,null);assert.equal(job.leaseUntil,null);
-    assert.equal(job.attempts,1);assert.match(job.lastError,/取消|aborted/i);
+    assert.equal(job.attempts,0);assert.match(job.lastError,/HOST_STOPPED/);assert.equal(job.failure.category,'host_shutdown');
     assert.equal(s.getStatus().memories,0);
   });
   f=await launch(w);
   await until(async()=>{const state=await f.state();return state.queue.length===1&&state.queue[0].status==='done';});
   assert.equal(f.inputs.length,1);
-  w.db(s=>assert.equal(s.listJobs()[0].attempts,2));
+  w.db(s=>assert.equal(s.listJobs()[0].attempts,1));
   await f.stop();
 });
 

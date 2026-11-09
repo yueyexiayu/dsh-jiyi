@@ -82,6 +82,16 @@ test('queue classifies stored errors conservatively and displays every character
   await app.settle(); assert.match(app.text(), /失败分类：adapter 未注册/); assert.match(app.text(), /失败分类：抽取 schema 无效/); assert.match(app.text(), /失败分类：未知/); assert.ok(app.text().includes(full)); app.destroy();
 });
 
+test('structured provider failures show the actual category and stage', async () => {
+  const app=harness(()=>state({queue:[{id:'q-timeout',status:'failed',attempts:3,error:'文本模型调用超时',failure:{code:'EXTRACTION_TIMEOUT',category:'provider_timeout',stage:'memory-review',retryable:true},updatedAt:'2026-11-07T00:00:00Z'}]}));
+  await app.settle();assert.match(app.text(),/provider 超时/);assert.match(app.text(),/memory-review/);app.destroy();
+});
+
+test('recall health separates normal no-hit results from failures and shows stage latency', async () => {
+  const app=harness(()=>state({retrievalStats:{total:12,last24h:{total:5,failures:1},byStatus:{hit:2,'no-hit':8,timeout:1,error:1},byFailureStage:{'relevance-llm':1,packaging:1},byErrorCode:{RETRIEVAL_TIMEOUT:1},latencyMs:{samples:12,p50:1200,p95:9000,max:10000},note:'no-hit 是正常的零命中决策，不计为失败'}}));
+  await app.settle();assert.match(app.text(),/召回健康度 · 12 次/);assert.match(app.text(),/no-hit 8/);assert.match(app.text(),/relevance-llm 1/);assert.match(app.text(),/延迟 p50 1200ms/);app.destroy();
+});
+
 test('history loads failed entries on demand, classifies full errors and pages without mutations', async () => {
   const longError = 'no adapter registered for provider "openai-codex"\n' + '细节'.repeat(1000);
   const app = harness(call => call.op === 'failedQueue' ? {ok:true,offset:Number(call.url.searchParams.get('offset')),total:101,queue: Number(call.url.searchParams.get('offset')) === 0 ? Array.from({length:100},(_,i)=>({id:String(i),status:'failed',error:i===0?longError:'抽取记忆缺少有效内容/类型/范围/来源'})) : [{id:'old',status:'failed',error:'其他错误'}]} : state({queue:[]}));
@@ -145,6 +155,14 @@ test('lets the user choose whether a memory is always loaded', async () => {
   assert.deepEqual(app.calls.find(call => call.op === 'set-inclusion').body, { op: 'set-inclusion', id: 'm1', inclusion: 'essential', expectedRevision: 3 });
   assert.match(app.text(), /由你指定/); assert.equal(app.find('记忆使用方式 m1').props.value, 'essential');
   app.destroy();
+});
+test('status memories expose an editable validity window', async () => {
+  const statusMemory={...memory,id:'status-memory',type:'status',content:'临时维护窗口',statusTtlHours:null};
+  const app=harness(call=>call.op==='setStatusTtl'?{ok:true,memory:{...statusMemory,statusTtlHours:call.body.statusTtlHours}}:state({memories:[statusMemory]}));
+  await app.settle();assert.match(app.text(),/状态有效期/);
+  await app.change('状态有效期 status-memory','24');
+  assert.deepEqual(app.calls.find(call=>call.op==='setStatusTtl').body,{op:'setStatusTtl',id:'status-memory',statusTtlHours:24});
+  assert.match(app.text(),/状态有效期已更新/);app.destroy();
 });
 
 test('shows the latest committed changes above the input and isolates sessions', async () => {

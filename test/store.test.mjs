@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { openStore } from '../lib/store.js';
 
 const source = {sessionId:'session-new',eventId:'42',eventSeq:42,eventTime:'2026-10-24T01:00:00.000Z',quote:'User explicitly said this',evidence:'User explicitly said this'};
@@ -12,8 +13,8 @@ function fixture(t) {
   const path = join(dir,'memory.sqlite');
   let time = '2026-10-24T01:00:00.000Z';
   let store = openStore(path,{clock:()=>time});
-  t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true});});
-  return {get store(){return store;},path,setTime(value){time=value;},restart(){store.close();store=openStore(path,{clock:()=>time});return store;}};
+  t.after(()=>{try{store.close();}catch{}rmSync(dir,{recursive:true,force:true});});
+  return {get store(){return store;},path,setTime(value){time=value;},restart(){try{store.close();}catch{}store=openStore(path,{clock:()=>time});return store;}};
 }
 
 test('fresh database contains no imported history; project identities persist and names never merge',t=>{
@@ -174,22 +175,50 @@ test('queue is idempotent, leases survive restart and bounded retries become vis
   const retry=f.store.claimJobs()[0];
   assert.equal(retry.id,job.id);
   assert.equal(retry.attempts,2);
+  assert.equal(retry.attemptHistory[0].failure.code,'LEASE_EXPIRED');
   assert.notEqual(retry.token,claimed.token);
   assert.throws(()=>f.store.completeJob(job.id,claimed.token),/lease lost/);
-  const failed=f.store.failJob(job.id,retry.token,new Error('model unavailable'));
+  const structured={code:'SERVER',category:'provider_busy',retryable:true,stage:'memory-review',message:'model unavailable',requestId:'req-1',at:'2026-10-24T01:00:00.000Z'};
+  const failed=f.store.failJob(job.id,retry.token,new Error('model unavailable'),{failure:structured,retryDelayMs:30000});
   assert.equal(failed.state,'failed');
   assert.equal(failed.lastError,'model unavailable');
+  assert.deepEqual(failed.failure,structured);
+  assert.equal(failed.attemptHistory.length,2);
+  assert.equal(failed.attemptHistory[1].nextAt,null);
   assert.equal(f.store.claimJobs().length,0);
   assert.equal(f.restart().getStatus().queue.failed,1);
   assert.equal(f.store.listJobs({limit:1})[0].id,job.id);
   const reset=f.store.retryJob(job.id);
   assert.equal(reset.state,'pending');
   assert.equal(reset.attempts,0);
+  assert.equal(reset.failure,null);
+  assert.equal(reset.attemptHistory.length,2,'manual retry preserves prior diagnostics');
   assert.deepEqual(reset.payload,{text:'new event'});
   assert.throws(()=>f.store.retryJob(job.id),/Only failed/);
   const final=f.store.claimJobs()[0];
   f.store.completeJob(final.id,final.token);
   assert.throws(()=>f.store.retryJob(final.id),/Only failed/);
+});
+
+test('schema upgrade adds status TTL and structured queue diagnostics without losing data',t=>{
+  const f=fixture(t),memory=f.store.putMemory({...fact('version one memory'),kind:'status',statusTtlHours:24});
+  f.store.close();
+  const db=new DatabaseSync(f.path);
+  try {
+    db.exec('ALTER TABLE memories DROP COLUMN status_ttl_hours; ALTER TABLE queue DROP COLUMN failure; ALTER TABLE queue DROP COLUMN attempt_history; PRAGMA user_version=1;');
+  } finally {db.close();}
+  const upgraded=f.restart();
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version,3);
+  assert.equal(upgraded.getMemory(memory.id).content,'version one memory');
+  assert.equal(upgraded.getJob('missing'),null);
+  assert.equal(upgraded.db.prepare('PRAGMA table_info(memories)').all().some(row=>row.name==='status_ttl_hours'),true);
+  assert.deepEqual(upgraded.db.prepare('PRAGMA table_info(queue)').all().filter(row=>['failure','attempt_history'].includes(row.name)).map(row=>row.name),['failure','attempt_history']);
+});
+test('changing a status into another kind clears its status TTL',t=>{
+  const {store:s}=fixture(t);
+  const status=s.putMemory({...fact('临时状态'),kind:'status',statusTtlHours:24});
+  const decision=s.replaceMemory(status.id,fact('最终决定',{kind:'decision'}),{expectedVersion:status.version});
+  assert.equal(decision.kind,'decision');assert.equal(decision.statusTtlHours,null);
 });
 
 test('completeJob commits memory, vector, FTS, cursor and done state as one batch',t=>{
@@ -278,4 +307,18 @@ test('watch checkpoint, cursors and recall ledger persist accurate status/refere
   assert.equal(reopened.listRecalls({sessionId:'unrelated'}).length,0);
   assert.equal(reopened.listRecalls().length,1);
   assert.throws(()=>reopened.recordRecall({sessionId:'s',requestId:'bad',status:'success'}),/Invalid recall status/);
+});
+
+test('recall summary separates normal no-hit from failures and attributes the actual failure stage',t=>{
+  const {store:s}=fixture(t);
+  s.recordRecall({sessionId:'s',requestId:'hit',status:'prepared',details:{status:'hit',diagnostics:{hostLatency:{elapsedMs:1200}}}});
+  s.recordRecall({sessionId:'s',requestId:'none',status:'empty',details:{status:'no-hit',diagnostics:{hostLatency:{elapsedMs:300}}}});
+  s.recordRecall({sessionId:'s',requestId:'timeout',status:'error',details:{status:'timeout',diagnostics:{errorCode:'RETRIEVAL_TIMEOUT',failureStage:'nativePackaging',retrieve:{events:[{stage:'llm',status:'timeout'}]},hostLatency:{elapsedMs:10000}}}});
+  s.recordRecall({sessionId:'s',requestId:'disabled',status:'error',details:{status:'disabled',diagnostics:{errorCode:'DISABLED'}}});
+  s.recordRecall({sessionId:'s',requestId:'config',status:'error',details:{status:'not-configured',diagnostics:{errorCode:'NOT_CONFIGURED'}}});
+  const stats=s.getRecallStats({now:Date.parse('2026-10-24T01:00:00.000Z')});
+  assert.equal(stats.total,5);assert.equal(stats.byStatus['no-hit'],1);assert.equal(stats.byStatus.hit,1);assert.equal(stats.byStatus.timeout,1);
+  assert.equal(stats.byFailureStage['relevance-llm'],1);assert.equal(stats.byFailureStage.configuration,2);assert.equal(stats.byErrorCode.RETRIEVAL_TIMEOUT,1);
+  assert.deepEqual(stats.last24h,{total:5,failures:3});assert.equal(stats.latencyMs.p50,1200);assert.equal(stats.latencyMs.max,10000);
+  assert.match(stats.note,/no-hit/);
 });

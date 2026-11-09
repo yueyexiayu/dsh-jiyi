@@ -58,7 +58,7 @@ test('returns only exact id/version decisions, scope labels remain data, and SDK
 });
 
 test('v7 adds the approved denial contrast without losing the HTTP boundary, independence, partial support or quote guards', () => {
-  assert.equal(RELEVANCE_VERSION, 'jiyi-relevance-v7');
+  assert.equal(RELEVANCE_VERSION, 'jiyi-relevance-v8');
   assert.ok(RELEVANCE_SYSTEM.includes('否定问法对照（以下是合成例，不是候选事实）'));
   assert.ok(RELEVANCE_SYSTEM.includes('明确禁止就是对同一操作“能否”的直接否定证据'));
   assert.ok(RELEVANCE_SYSTEM.includes('不外推到其他操作或权限'));
@@ -168,6 +168,19 @@ test('candidate identity snapshot stays exact across asynchronous call', async (
   const result = await pending;
   assert.deepEqual(result.ids, [{ id: 'm1', version: 2 }]);
   assert.equal(result.grounding.items[0].quoteBytes, 15);
+});
+
+test('two provider failures open a cooldown that fails fast while explicit verification can still probe', async () => {
+  let calls=0;
+  const f=fixture('',{stream:()=> (async function*(){calls++;throw Object.assign(new Error('Service is too busy'),{code:'SERVER'});})()});
+  await assert.rejects(f.judge.judge(input()),code('SERVER'));
+  await assert.rejects(f.judge.judge(input()),code('SERVER'));
+  const cooldown=f.judge.getStatus().cooldownUntil;assert.ok(cooldown);
+  await assert.rejects(f.judge.judge(input()),code('RELEVANCE_COOLDOWN'));
+  assert.equal(f.judge.getStatus().cooldownUntil,cooldown,'failing fast must not extend its own cooldown');
+  assert.equal(calls,2);
+  await assert.rejects(f.judge.validate(),code('SERVER'));
+  assert.equal(calls,3,'explicit validation bypasses the automatic-recall cooldown');
 });
 
 test('validate performs the fixed related/unrelated probe, returns UI-ready status, and rejects a wrong or empty selection', async () => {

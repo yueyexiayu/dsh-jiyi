@@ -143,6 +143,7 @@ test('Host provides paged historical failed jobs independent of the recent queue
       assert.equal((await f.state()).queue.some(j=>j.status==='failed'),false);
       const read=async offset=>{const res=await f.route.fetch(new Request('http://local/api/jiyi?op=failedQueue&offset='+offset));return {status:res.status,body:await res.json()};};
       const first=await read('0'); assert.equal(first.body.total,103);assert.equal(first.body.queue.length,100);assert.equal(first.body.queue[0].error,'no adapter registered for provider "openai-codex"');
+      assert.equal(first.body.queue[0].failure.legacy,true);assert.equal(first.body.queue[0].failure.stage,'legacy-queue');
       const second=await read('100'); assert.equal(second.body.queue.length,3);assert.equal(new Set([...first.body.queue,...second.body.queue].map(j=>j.id)).size,103);
       for(const invalid of ['-1','1.5','1e3','9007199254740992']) assert.equal((await read(invalid)).status,400);
       assert.deepEqual(seed.db.prepare('SELECT id,state,last_error,updated_at FROM queue ORDER BY rowid').all(),before);
@@ -277,10 +278,12 @@ test('saved statusStaleHours persists through complete plugin disposal/reapply a
     let stamp=new Date(Date.now()-80*3600000).toISOString();
     const seed=new MemoryStore(state.paths.database,{clock:()=>stamp});
     try {
-      const base={scope:'global',kind:'status',content:'持久化排序基准状态等待核实',sources:[source],embedding:Array.from({length:EMBEDDING_DIMENSIONS},(_,i)=>i===0?1:0),embeddingModel:EMBEDDING_MODEL,embeddingVersion:EMBEDDING_VERSION};
-      seed.putMemory({...base,id:'a-aging-status'});
-      stamp=new Date().toISOString();seed.putMemory({...base,id:'b-fresh-status'});
+      const base={scope:'global',kind:'status',content:'持久化排序基准状态等待核实',embedding:Array.from({length:EMBEDDING_DIMENSIONS},(_,i)=>i===0?1:0),embeddingModel:EMBEDDING_MODEL,embeddingVersion:EMBEDDING_VERSION};
+      seed.putMemory({...base,id:'a-aging-status',sources:[{...source,eventTime:stamp}]});
+      stamp=new Date().toISOString();seed.putMemory({...base,id:'b-fresh-status',sources:[{...source,eventTime:stamp}]});
     } finally {seed.close();}
+    const ttl=await f.request('setStatusTtl',{id:'a-aging-status',statusTtlHours:96});assert.equal(ttl.memory.statusTtlHours,96);
+    assert.equal((await f.request('setStatusTtl',{id:'a-aging-status',statusTtlHours:null})).memory.statusTtlHours,null);
     const all=async({candidates})=>candidates.map(({id,version})=>({id,version}));
     const search=async()=>{
       f.setJudge(all);
@@ -358,6 +361,65 @@ test('a failed extraction after a returned response uses a new durable attempt o
   } finally {await f.cleanup();}
 });
 
+test('a hidden status conflict is retried once with the actual target available to the review model',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const state=await f.state();
+    const seed=new MemoryStore(state.paths.database);
+    let project,target;
+    try {
+      project=seed.resolveProject({cwd:f.session.header.cwd});
+      target=seed.putMemory({kind:'status',scope:'project',projectId:project.id,factKey:'page22-status',content:'第22页现场状态显示失败',sources:[{...source,eventTime:'2026-10-20T00:00:00Z'}]});
+      for(let i=0;i<100;i++) seed.putMemory({kind:'status',scope:'project',projectId:project.id,factKey:`other-status-${i}`,content:`第${i+30}页其他状态待核实`,sources:[{...source,eventId:String(1000+i),eventSeq:1000+i,eventTime:`2026-10-25T${String(i%24).padStart(2,'0')}:${String(i%60).padStart(2,'0')}:00Z`}]});
+      seed.db.prepare('UPDATE memories SET updated_at=? WHERE id=?').run('2026-10-20T00:00:00.000Z',target.id);
+    } finally {seed.close();}
+    const quote='第22页现场状态已经恢复通过';
+    let calls=0;
+    const prepare=f.ctx.llm.prepareCall;
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{
+      const call=await prepare(config,signal,configure),stream=call.stream;
+      call.stream=async function*(request){
+        const payload=JSON.parse(request.messages[0].content[0].text);
+        if(!Array.isArray(payload.sources)||payload.kind==='lesson') return yield* stream(request);
+        calls++;
+        const visible=payload.existing?.find(memory=>memory.id===target.id);
+        const operation={type:visible?'update':'add',...(visible?{memoryId:target.id}:{}),kind:'status',scope:'project',content:quote,factKey:'page22-current',sourceSeqs:payload.sources.map(item=>item.eventSeq),quotes:payload.sources.map(item=>item.quote)};
+        yield {type:'text-delta',index:0,text:JSON.stringify({operations:[operation]})};
+        yield {type:'finish',reason:{kind:'stop'}};
+      };
+      return call;
+    };
+    const user={id:'hidden-status-user',taskId:'hidden-status-task',role:'user',source:{kind:'user'},content:[{type:'text',text:quote}]};
+    f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const done=await until(async()=>{const current=await f.state();return current.queue.some(job=>job.status==='done')&&current;});
+    assert.equal(calls,2);
+    const updated=done.memories.find(memory=>memory.id===target.id);
+    assert.equal(updated.content,quote);assert.equal(updated.version,2);
+    assert.equal(done.memories.filter(memory=>memory.content===quote).length,1);
+  } finally {await f.cleanup();}
+});
+
+test('provider server failures persist structured stage diagnostics and minute-scale retry timing',async()=>{
+  const f=await fixture();
+  try {
+    assert.equal((await f.request('settings',{settings:{queue:{maxAttempts:1}}})).ok,true);
+    const prepare=f.ctx.llm.prepareCall;
+    f.ctx.llm.prepareCall=async()=>{throw Object.assign(new Error('Internal Server Error; request_id: req-provider-1'),{code:'SERVER'});};
+    const user={id:'structured-failure-user',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]};
+    f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    const state=await until(async()=>{const current=await f.state();return current.queue.find(item=>item.failure)&&current;});
+    const item=state.queue.find(job=>job.failure);
+    assert.equal(item.failure.code,'SERVER');assert.equal(item.failure.category,'provider_server');assert.equal(item.failure.stage,'memory-review-llm');assert.equal(item.failure.requestId,'req-provider-1');
+    assert.equal(item.attemptHistory.length,1);assert.ok(item.attemptHistory[0].retryDelayMs>=30000);assert.equal(item.attemptHistory[0].nextAt,null);
+    assert.match(state.extractionCircuit.until,/^\d{4}-/);
+    f.ctx.llm.prepareCall=prepare;
+    assert.equal((await f.request('retry',{id:item.id})).ok,true);
+    const done=await until(async()=>{const current=await f.state();return current.queue.some(job=>job.id===item.id&&job.status==='done')&&current;});
+    assert.equal(done.extractionCircuit.until,null,'manual retry bypasses an active provider cooldown');
+  } finally {await f.cleanup();}
+});
+
 test('Host defers budget-paused extraction without consuming attempts or retrying on the next timer tick',async()=>{
   const f=await fixture();
   try {
@@ -392,7 +454,7 @@ test('Host event→durable queue→real local embedding→automatic pre-step inj
     const injectedState=await f.state(),recall=injectedState.retrievals[0];
     assert.equal(recall.status,'injected');
     const diagnostics=recall.details.diagnostics;
-    assert.equal(diagnostics.relevance.version,'jiyi-relevance-v7');
+    assert.equal(diagnostics.relevance.version,'jiyi-relevance-v8');
     assert.deepEqual(diagnostics.relevance.grounding.items,[{id:s.memories[0].id,version:1,contentSha256:'f5ffb00a38b35e32ca7ec088aee4a977b9cc6700cf02b7e20a63bcc4d3d9e227',quoteSha256:'f5ffb00a38b35e32ca7ec088aee4a977b9cc6700cf02b7e20a63bcc4d3d9e227',quoteStart:0,quoteEnd:14,quoteBytes:42}]);
     assert.equal(injectedState.memories[0].content,'用户长期偏好使用简体中文回答','Existing full memory content must not be replaced by a quote');
     assert.equal(JSON.stringify(diagnostics).includes('用户长期偏好使用简体中文回答'),false,'New diagnostics must not retain a second quote/raw response copy');
@@ -582,6 +644,53 @@ test('review cannot commit when an existing memory source becomes private in fli
   } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
 });
 
+test('a conflict target added for a model retry cannot become private in flight unnoticed',async()=>{
+  const f=await fixture();
+  const key=Symbol.for('dshbot.private-session-checks');
+  let closed=false,release,entered;
+  const check=id=>closed && id==='later-private-conflict';
+  const started=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{release=resolve;});
+  globalThis[key] ??= new Set();globalThis[key].add(check);
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const state=await f.state(),seed=new MemoryStore(state.paths.database);
+    let target;
+    try {
+      const project=seed.resolveProject({cwd:f.session.header.cwd});
+      target=seed.putMemory({kind:'status',scope:'project',projectId:project.id,factKey:'page22-private',content:'第22页现场状态显示失败',sources:[{...source,sessionId:'later-private-conflict'}]});
+      for(let i=0;i<100;i++) seed.putMemory({kind:'status',scope:'project',projectId:project.id,factKey:`private-filler-${i}`,content:`第${i+30}页其他状态待核实`,sources:[{...source,eventId:String(2000+i),eventSeq:2000+i}]});
+      seed.db.prepare('UPDATE memories SET updated_at=? WHERE id=?').run('2026-10-20T00:00:00.000Z',target.id);
+    } finally {seed.close();}
+    const quote='第22页现场状态已经恢复通过';
+    let calls=0;
+    const prepare=f.ctx.llm.prepareCall;
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{
+      const call=await prepare(config,signal,configure),stream=call.stream;
+      call.stream=async function*(request){
+        const payload=JSON.parse(request.messages[0].content[0].text);
+        if(!Array.isArray(payload.sources)||payload.kind==='lesson') return yield* stream(request);
+        calls++;
+        if(calls===1) {
+          const operation={type:'add',kind:'status',scope:'project',content:quote,factKey:'page22-current',sourceSeqs:payload.sources.map(item=>item.eventSeq),quotes:payload.sources.map(item=>item.quote)};
+          yield {type:'text-delta',index:0,text:JSON.stringify({operations:[operation]})};
+        } else {
+          assert.ok(payload.existing.some(memory=>memory.id===target.id));
+          entered();await gate;
+          yield {type:'text-delta',index:0,text:JSON.stringify({operations:[]})};
+        }
+        yield {type:'finish',reason:{kind:'stop'}};
+      };
+      return call;
+    };
+    f.emit(f.event(1,'user/message',{id:'hidden-private-user',role:'user',source:{kind:'user'},content:[{type:'text',text:quote}]}));
+    f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    await started;closed=true;release();
+    const result=await until(async()=>{const current=await f.state();return current.queue.find(job=>job.error?.includes('PRIVATE_BOT'))&&current;});
+    assert.equal(calls,2);assert.equal(result.queue[0].status,'pending');
+  } finally {release?.();globalThis[key].delete(check);if(!globalThis[key].size)delete globalThis[key];await f.cleanup();}
+});
+
 test('review changes become visible only after commit and concurrent user selection is protected',async()=>{
   const f=await fixture();
   try {
@@ -627,6 +736,7 @@ test('Host keeps relevance failure explicit and retries only for a new genuine u
     assert.equal(failed.retrievals[0].status,'error');
     assert.match(failed.retrievals[0].error,/TEST_RELEVANCE_FAILURE/);
     assert.deepEqual(failed.retrievals[0].memoryIds,[]);
+    assert.equal(failed.retrievals[0].details.diagnostics.failureStage,'relevance-llm');
     assert.equal(failed.models.relevance.status,'error');
     assert.equal(f.getRelevanceCalls(),1);
     f.setJudge(async payload=>payload.candidates.filter(c=>c.content==='用户长期偏好使用简体中文回答').map(({id,version})=>({id,version})));
