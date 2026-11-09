@@ -22,5 +22,8 @@ test('private Bot sessions and archives stay closed across live and saved state'
     assert.equal(memoryHasPrivateSource({sources:[{sessionId:'past'}]},id=>privateBotSession(id,home)),true);
     writeFileSync(path, '{broken');
     assert.equal(privateBotSession('unknown',home),true);
+    writeFileSync(path, JSON.stringify({version:1,bots:{refreshed:{id:'refreshed',private:true,sessionId:'new-private'}},privateArchives:[]}));
+    assert.equal(privateBotSession('new-private',home),true);
+    assert.equal(privateBotSession('past',home),false,'file changes invalidate the cached privacy set');
   } finally { if (globalThis[key]?.size === 0) delete globalThis[key]; rmSync(home,{recursive:true,force:true}); }
 });

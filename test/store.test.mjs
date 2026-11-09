@@ -122,6 +122,24 @@ test('Chinese keyword search, deletion removes vectors/FTS and historical eviden
   assert.throws(()=>s.putMemory(fact('revive',{id:m.id,expectedVersion:deleted.version})),/cannot be revived/);
 });
 
+test('manual memory deletion removes its private audit content and list filters report totals',t=>{
+  const f=fixture(t),s=f.store;
+  const audit={sessionId:'jiyi-manual:audit-delete',eventId:'audit-delete',eventSeq:0,eventTime:source.eventTime,quote:'manual secret body',evidence:'manual-create',origin:'manual'};
+  const memory=s.putMemory({scope:'global',content:'manual secret body',sources:[audit]});
+  s.setMetadata(`manual:${audit.sessionId}`,{type:'jiyi/manual-create',seq:0,data:{content:memory.content}});
+  const active=s.putMemory(fact('active filter fact'));
+  const deleted=s.deleteMemory(memory.id,{expectedVersion:memory.version});
+  assert.equal(deleted.content,'');
+  assert.equal(s.getMetadata(`manual:${audit.sessionId}`),null);
+  assert.deepEqual(s.listMemories({scope:'all',status:'active'}).map(item=>item.id),[active.id]);
+  assert.deepEqual(s.listMemories({scope:'all',status:'deleted'}).map(item=>item.id),[memory.id]);
+  assert.equal(s.countMemories({scope:'all',includeInactive:true}),2);
+  assert.equal(s.countMemories({scope:'all',status:'active'}),1);
+  assert.equal(s.countMemories({scope:'all',query:'filter'}),1);
+  s.setMetadata(`manual:${audit.sessionId}`,{type:'jiyi/manual-create',seq:0,data:{content:memory.content}});
+  assert.equal(f.restart().getMetadata(`manual:${audit.sessionId}`),null,'startup cleanup removes legacy deleted manual audit bodies');
+});
+
 test('essential selections persist, respect user control and enforce each project budget',t=>{
   const f=fixture(t),s=f.store;
   const p=s.resolveProject({path:'/tmp/jiyi-essential-a'});

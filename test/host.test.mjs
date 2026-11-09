@@ -185,6 +185,9 @@ test('Host creates independent manual memories with durable source audits and va
     await f.request('settings',{settings:{embedding:{backend:null}}});
     assert.equal((await f.request('createMemory',{scope:'global',content:'失败不可写入'})).ok,false);
     assert.equal((await f.state()).memories.length,3);
+    const removed=await f.request('delete',{id:made.memory.id,version:made.memory.version});assert.equal(removed.ok,true,JSON.stringify(removed));
+    const removedSource=await f.route.fetch(new Request('http://local/api/jiyi',{method:'POST',body:JSON.stringify({op:'source',sessionId:audit.sessionId,eventSeq:0})}));
+    assert.equal(removedSource.status,404);assert.equal((await removedSource.json()).code,'NOT_FOUND');
   } finally {await f.cleanup();}
 });
 
@@ -200,6 +203,35 @@ test('Host settings replacement settles an in-flight embedding and closes its ch
     assert.match(result.error,/MODEL_DISPOSED/);
     assert.throws(()=>process.kill(pid,0),{code:'ESRCH'},'The replaced child has exited');
     assert.deepEqual((await f.state()).models.embedding.activeProcesses,[]);
+  } finally {await f.cleanup();}
+});
+
+test('settings replacement blocks queued extraction until replacement models are ready',async()=>{
+  const f=await fixture();
+  try {
+    const pending=f.request('verifyEmbedding',{});
+    await until(async()=> (await f.state()).models.embedding.activeProcesses.some(p=>p.pid));
+    const settings=f.request('settings',{settings:{}});
+    await new Promise(resolve=>setTimeout(resolve,10));
+    const user={id:'settings-race-user',role:'user',source:{kind:'user'},content:[{type:'text',text:source.quote}]};
+    f.emit(f.event(1,'user/message',user));f.emit(f.event(2,'turn/end',{turn:1,reason:{kind:'completed'}}));
+    assert.equal((await settings).ok,true);
+    assert.equal((await pending).ok,false);
+    const state=await until(async()=>{const current=await f.state();const job=current.queue.find(item=>item.kind==='extraction');if(job?.status==='failed')throw new Error(job.error);return job?.status==='done'?current:null;});
+    assert.equal(state.memories.some(memory=>memory.content==='用户长期偏好使用简体中文回答'),true);
+  } finally {await f.cleanup();}
+});
+
+test('memory management pagination exposes every record with bounded pages',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const seed=new MemoryStore((await f.state()).paths.database);
+    try {for(let i=0;i<205;i++)seed.putMemory({scope:'global',content:`分页记忆 ${String(i).padStart(3,'0')}`,sources:[{...source,eventId:String(i+100),eventSeq:i+100}],factKey:`page:${i}`});} finally {seed.close();}
+    const first=await f.state();assert.deepEqual(first.memoryPage,{offset:0,limit:200,total:205});assert.equal(first.memories.length,200);
+    const response=await f.route.fetch(new Request('http://local/api/jiyi?op=memories&memoryOffset=200&memoryLimit=200'));
+    const page=await response.json();assert.equal(response.status,200);assert.equal(page.memories.length,5);assert.deepEqual(page.memoryPage,{offset:200,limit:200,total:205});
+    const invalid=await f.route.fetch(new Request('http://local/api/jiyi?op=memories&memoryLimit=201'));assert.equal(invalid.status,400);
   } finally {await f.cleanup();}
 });
 

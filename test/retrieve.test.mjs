@@ -87,6 +87,18 @@ test('scope-empty and below-threshold searches skip the judge while preserving e
   assert.deepEqual(updates, [['missing', vector(1), EMBEDDING_MODEL, { expectedVersion: 1, embeddingVersion: EMBEDDING_VERSION }]]);
 });
 
+test('oversized stores are deterministically bounded before retrieval instead of failing at the 2000-record guard', async () => {
+  const records=Array.from({length:2100},(_,i)=>memory(`bounded-${i}`,'长期规则',{embedding:vector()}));
+  const models={getStatus:()=>({status:'ready'}),embed:adapter.embed};
+  const judge={getStatus:()=>({status:'ready'}),judge:async()=>({ids:[]})};
+  const settings={enabled:true,retrieval:{maxMemories:6,maxCandidates:12,maxChars:4000,semanticThreshold:.2,statusStaleHours:72,timeoutMs:10000}};
+  const result=await searchMemories({query:'长期规则',settings,models,relevance:judge,readOnly:true,store:{
+    listProjects:()=>[],listCandidates:()=>records.slice(0,2000),searchText:()=>[],countMemories:()=>records.length,getMemory:id=>records.find(record=>record.id===id),
+  }});
+  assert.equal(result.status,'no-hit');
+  assert.deepEqual(result.diagnostics.candidateScan,{limit:2000,scoped:2100,candidates:2000,skipped:100});
+});
+
 test('the 0.2 threshold expands candidates only; a below-0.5 candidate still needs explicit approval', async () => {
   const embedding = vector(1); embedding[0] = 0.3; embedding[1] = Math.sqrt(0.91);
   const options = { query: '金额按什么单位保存', records: [memory('amount', '采用整数分保存', { embedding })] };

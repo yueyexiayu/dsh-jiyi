@@ -100,6 +100,17 @@ test('history read failure is visible and does not show a stale page as current'
   fail=true; await app.click('查看历史失败项'); assert.match(app.text(),/加载历史失败队列失败：队列读取失败/); assert.doesNotMatch(app.text(),/旧错误/); app.destroy();
 });
 
+test('memory list loads older bounded pages without hiding records behind the first page', async () => {
+  const older={...memory,id:'m-older',content:'第二页记忆',version:1,updatedAt:'2026-10-19T01:02:00Z'};
+  const app=harness(call=>call.op==='memories' ? {ok:true,memories:[older],memoryPage:{offset:200,limit:200,total:201}} : state({memoryPage:{offset:0,limit:200,total:201}}));
+  await app.settle();
+  assert.match(app.text(),/已加载 1 \/ 201 条记录/);
+  await app.click('加载更多记忆');
+  assert.match(app.text(),/第二页记忆/);
+  assert.equal(app.calls.find(call=>call.op==='memories').url.searchParams.get('memoryOffset'),'200');
+  app.destroy();
+});
+
 test('document or tab hiding stops polling and visibility restoration refreshes once', async () => {
   const app = harness(); await app.settle();
   const count = () => app.calls.filter(c => c.op === 'state').length;

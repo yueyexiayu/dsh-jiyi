@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -41,6 +41,20 @@ test('CLI uses package version and rejects mismatched discovery and Host identit
     if(close)await close();
     assert.equal(dirname(resolve(dir)),resolve(tmpdir()));rmSync(dir,{recursive:true,force:false});
   }
+});
+
+test('CLI defaults to jiyi-v2 and Host startup removes sockets owned by exited processes',async()=>{
+  const home=mkdtempSync(join('/tmp','ji-cli-default-dir-'));
+  const dir=join(home,'storages','jiyi-v2');mkdirSync(dir,{recursive:true});
+  let close;
+  try {
+    const missing=await new Promise(resolve=>execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--status'],{env:{...process.env,DSH_HOME:home}},(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
+    assert.equal(missing.exit,1);assert.match(missing.stderr,/storages\/jiyi-v2\/eval-endpoint\.json/);
+    const child=await new Promise((resolve,reject)=>execFile('/usr/local/bin/node',['-e',"const net=require('node:net');const path=require('node:path');const s=net.createServer();s.listen(path.join(process.argv[1],'eval-'+process.pid+'.sock'),()=>{console.log(process.pid);process.exit(0)})",dir],(error,stdout)=>error?reject(error):resolve(Number(stdout.trim()))));
+    const stale=join(dir,`eval-${child}.sock`);assert.equal(existsSync(stale),true);
+    close=await createEvaluationIpc({dataDir:dir,version:VERSION,runtime:{pid:process.pid,loadedAt:'socket-cleanup'},run:async()=>({ok:true})});
+    assert.equal(existsSync(stale),false);
+  } finally {if(close)await close();rmSync(home,{recursive:true,force:true});}
 });
 
 // Deliberately deceptive fixture Host: reports a true *old* proof then changes

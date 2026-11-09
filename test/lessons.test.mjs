@@ -15,6 +15,18 @@ test('lesson triggers ignore ordinary errors and accept explicit user correction
 test('tool evidence is bounded, redacted and repeated by a stable normalized signature',()=>{
   const raw='TEST_FAILED: api_key=sk-abcdefghijklmnop at /Users/ning/project/a.test.ts line 42';
   assert.doesNotMatch(redactLessonText(raw,400),/sk-abcdefghijklmnop/);
+  for(const secret of [
+    'Authorization: Bearer abcDEF1234567890',
+    '{"apiKey":"abcDEF1234567890","ok":false}',
+    'AWS_SESSION_TOKEN=abcDEF1234567890',
+    'https://user:abcDEF1234567890@example.com/path',
+    '--token abcDEF1234567890',
+    '-----BEGIN PRIVATE KEY-----abcDEF1234567890-----END PRIVATE KEY-----',
+  ]) {
+    const redacted=redactLessonText(secret,400);
+    assert.doesNotMatch(redacted,/abcDEF1234567890/,secret);
+    assert.match(redacted,/REDACTED/,secret);
+  }
   const call=lessonToolCall(event(1,'tool/call',{callId:'c',name:'bash',arguments:JSON.stringify({command:'npm test'})}));
   assert.equal(call.highSignal,true);
   const result=event(2,'tool/result',{message:{toolCallId:'c',isError:true,content:[{type:'text',text:raw}]},error:{name:'Error',code:'TEST_FAILED'}});

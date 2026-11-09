@@ -4,7 +4,7 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.29</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.30</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
@@ -116,7 +116,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.29**。
+- 确认 **Client / Host 均为 0.1.30**。
 - 配置并分别验证提取、Embedding 与相关性模型。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
 
@@ -137,6 +137,8 @@ node -e "console.log(require.resolve('jiyi'))"
 <summary><strong>数据位置与资源限制</strong></summary>
 
 - 数据与设置位于 `$DSH_HOME/storages/jiyi-v2/`，目录/文件权限为0700/0600；不在 Git 仓库中。不要提交数据库、WAL、凭据、私人会话或原始评测记录。
+- 管理面板按 200 条分页加载全部记忆；进入模型检索前使用 2000 条安全窗口，并在诊断中报告被截断数量。
+- 自动整理和教训证据在发送模型前过滤常见凭据格式；删除手动新建或纠正的记忆时，同步清理对应 `manual:*` 审计正文。
 - API 为 `/api/jiyi`，走 DSH 正常认证；凭据保留在 Host，不发送到 Client。
 - 模型冷加载默认上限120秒，单次推理与召回默认10秒；同一 Host 复用存活的隔离 Embedding 子进程，最多并发2个请求。过载、取消、超时和释放失败明确报告。
 - 运行库锁定 `@huggingface/transformers@3.8.1`。模型、`node_modules` 与运行缓存不提交到 Git。

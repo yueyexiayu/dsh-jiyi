@@ -28,7 +28,7 @@ async function exchange(socketPath,request) {
   });
 }
 try {
-  const args=process.argv.slice(2),options={};let mode=null,dataDir=join(process.env.DSH_HOME||join(homedir(),'.dsh'),'storages','jiyi');
+  const args=process.argv.slice(2),options={};let mode=null,dataDir=join(process.env.DSH_HOME||join(homedir(),'.dsh'),'storages','jiyi-v2');
   if(!args.length||args.includes('--help')) {console.log(help);} else {
     for(let i=0;i<args.length;i++) {
       const key=args[i];
