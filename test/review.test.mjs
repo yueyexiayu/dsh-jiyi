@@ -16,12 +16,12 @@ test('review updates preserve identity and concurrency checks with original evid
   assert.equal(result.memories[0].sources.at(-1).quote,'我喜欢中文');
 });
 test('review model input redacts credentials while preserving evidence identities',()=>{
-  const secretPayload={...payload,sources:[{...source,quote:'Authorization: Bearer syntheticToken12345; 请长期使用中文。'}]};
+  const secretPayload={...payload,sources:[{...source,quote:'Authorization: Bearer syntheticToken12345; key：oc_sk_syntheticCredit1234567890; 请长期使用中文。'}]};
   const secretExisting={...old,content:'apiKey=syntheticSecret12345',sources:[{origin:'automatic'}]};
   const sanitized=sanitizeReviewInput({...secretPayload,existing:[secretExisting]});
   assert.equal(sanitized.sources[0].sessionId,'s');
   assert.equal(sanitized.sources[0].eventSeq,2);
-  assert.doesNotMatch(sanitized.sources[0].quote,/syntheticToken12345|syntheticSecret12345/);
+  assert.doesNotMatch(sanitized.sources[0].quote,/syntheticToken12345|syntheticSecret12345|syntheticCredit1234567890/);
   assert.doesNotMatch(sanitized.existing[0].content,/syntheticSecret12345/);
   assert.match(sanitized.sources[0].quote,/请长期使用中文/);
 });

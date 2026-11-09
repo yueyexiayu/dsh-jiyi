@@ -86,10 +86,28 @@ test('recall messages are plugin user-role reference data, never fabricated tool
   assert.match(msg.content[0].text,/不能称为已确认的额外项目规则、许可限制或实现行为/);
   assert.match(msg.content[0].text,/未记载的具体细节应说明未知/);
 });
+test('legacy credential-shaped memory and source text never reach API, tools or recall references',async()=>{
+  const f=await fixture();
+  try {
+    const {MemoryStore}=await import('../lib/store.js');
+    const state=await f.state(),seed=new MemoryStore(state.paths.database);
+    let memory;
+    try {memory=seed.putMemory({kind:'project_fact',scope:'global',content:'OpenCode 认证：oc_sk_legacyMemory1234567890',sources:[{...source,quote:'配置 key：oc_sk_legacySource1234567890',evidence:'配置 key：oc_sk_legacySource1234567890'}]});}
+    finally {seed.close();}
+    const listed=JSON.stringify(await f.state());
+    assert.equal(listed.includes('oc_sk_legacyMemory1234567890'),false);assert.equal(listed.includes('oc_sk_legacySource1234567890'),false);
+    const recalled=recallMessage([memory],'request',x=>({...x,role:'user'}),[]).content[0].text;
+    assert.equal(recalled.includes('oc_sk_legacyMemory1234567890'),false);
+    f.setJudge(async payload=>payload.candidates.map(({id,version})=>({id,version})));
+    const searched=await f.tool('jiyi_search').execute({query:'OpenCode 认证',scope:'global'},{agent:{session:f.session},signal:new AbortController().signal});
+    assert.equal(JSON.stringify(searched).includes('oc_sk_legacyMemory1234567890'),false);
+    assert.equal(JSON.stringify(searched).includes('oc_sk_legacySource1234567890'),false);
+  } finally {await f.cleanup();}
+});
 
 async function fixture({dataDir,removeOnCleanup=true}={}) {
   const dir=dataDir??mkdtempSync(join(tmpdir(),'jiyi-host-test-'));
-  const listeners=new Map(),effects=[],routes=new Map(),sessions=new Map();
+  const listeners=new Map(),effects=[],routes=new Map(),sessions=new Map(),tools=new Map();
   const session={id:`jiyi-test-${randomUUID()}`,header:{cwd:join(dir,'ProjectA'),origin:'user'}};sessions.set(session.id,session);
   const helper={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
   let extractionCalls=0,relevanceCalls=0,reviewGate=null;
@@ -118,7 +136,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
       yield {type:'finish',reason:{kind:'stop'}};
     }};
   };
-  const ctx={connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helper},llm:{prepareCall},agents:{get:()=>null},sessions:{get:id=>sessions.get(id)},sessionPersistence:{open:async()=>{throw new Error('No stored test session');}},tools:{register:definition=>{assert.equal(typeof definition.output?.render,'function','current Host requires tool output.render');assert.deepEqual(definition.output.schema,{type:'object'});if(installedTools){installedTools.assertSupportedJsonSchema(definition.parameters);installedTools.ToolRuntime.prototype.register.call({ctx:{},layers:{effect:(_ctx,fn)=>fn({tools:{insert:()=>()=>{}}})}},definition);}}},logger:{error:()=>{}},on:(name,fn)=>{listeners.set(name,fn);return ()=>{};},effect:fn=>{effects.push(fn());}};
+  const ctx={connection:{fetch:{register:r=>routes.set(r.path,r)}},loader:{import:async()=>helper},llm:{prepareCall},agents:{get:()=>null},sessions:{get:id=>sessions.get(id)},sessionPersistence:{open:async()=>{throw new Error('No stored test session');}},tools:{register:definition=>{tools.set(definition.name,definition);assert.equal(typeof definition.output?.render,'function','current Host requires tool output.render');assert.deepEqual(definition.output.schema,{type:'object'});if(installedTools){installedTools.assertSupportedJsonSchema(definition.parameters);installedTools.ToolRuntime.prototype.register.call({ctx:{},layers:{effect:(_ctx,fn)=>fn({tools:{insert:()=>()=>{}}})}},definition);}}},logger:{error:()=>{}},on:(name,fn)=>{listeners.set(name,fn);return ()=>{};},effect:fn=>{effects.push(fn());}};
   await apply(ctx,{dataDir:dir});
   const route=routes.get('/api/jiyi');
   const request=async(op,body)=>{const req=body?new Request('http://local/api/jiyi',{method:'POST',body:JSON.stringify({op,...body})}):new Request(`http://local/api/jiyi?op=${op}&sessionId=${session.id}`); const res=await route.fetch(req); return res.json();};
@@ -126,7 +144,7 @@ async function fixture({dataDir,removeOnCleanup=true}={}) {
   const emit=e=>listeners.get('session/event')(session,e);
   const state=()=>request('state');
   const cleanup=async()=>{for(const dispose of effects.reverse())if(typeof dispose==='function')await dispose();if(removeOnCleanup)rmSync(dir,{recursive:true,force:true});};
-  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;},setReviewGate:fn=>{reviewGate=fn;}};
+  return {ctx,helper,session,route,listeners,state,request,emit,event,cleanup,tool:name=>tools.get(name),getExtractionCalls:()=>extractionCalls,getRelevanceCalls:()=>relevanceCalls,setJudge:fn=>{judge=fn;},setReviewGate:fn=>{reviewGate=fn;}};
 }
 
 test('Host provides paged historical failed jobs independent of the recent queue without changing records',async()=>{
