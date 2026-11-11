@@ -4,7 +4,7 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.33</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.34</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
@@ -12,7 +12,7 @@
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
 
-v0.1.33 adds versioned evidence and relations, structured decision logs, fact validity, isolated review conflicts, recall feedback and conservative offline consolidation that is off by default. The sidebar exposes evidence, inactive versions, pending review and decision history. A conflict cannot enter automatic recall until clear user evidence, an explicit time window and unchanged versions justify a decision.
+v0.1.34 adds versioned evidence and relations, structured decision logs, fact validity, isolated review conflicts, recall feedback and conservative offline consolidation that is off by default. The sidebar exposes evidence, inactive versions, pending review and decision history. A conflict cannot enter automatic recall until clear user evidence, an explicit time window and unchanged versions justify a decision.
 
 With dshbot, private Bot sessions are excluded from automatic review and recall, and memories sourced from them are excluded from model retrieval. Queued work is deferred and existing data is not deleted. Requests sent before a privacy change cannot be recalled; deferred work may resume if protection is lifted.
 
@@ -118,8 +118,9 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.33** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.34** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
+- The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
 
 ## Configuration
@@ -159,7 +160,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
-| 0.1.33 public-source regression · Node | **301 / 301** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
+| 0.1.34 public-source regression · Node | **303 / 303** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
 | 0.1.33 public-source regression · Electron | **303 / 303** | Installed SDK and real ToolRuntime; no failures, cancellations or skips |
 | 0.1.16 public-source regression · Electron | **186 / 186** | Historical result: actual installed SDK; no failures, cancellations or skips |
 | Fixed sample · Q13 | **First 5 / 5** | The specified local pre-publication evaluation |
