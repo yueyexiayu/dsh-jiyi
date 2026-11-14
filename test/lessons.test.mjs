@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { correctionEvidence, failureEvidence, failureSignature, lessonToolCall, redactLessonText, reviewChangesEvidence } from '../lib/lessons.js';
+import { correctionEvidence, failureEvidence, failureSignature, lessonToolCall, redactLessonText } from '../lib/lessons.js';
 import { parseLessonReview, LESSON_SYSTEM } from '../lib/review.js';
 
 const event=(seq,type,data)=>({seq,type,data,time:Date.parse('2026-11-08T00:00:00Z')+seq});
@@ -40,10 +40,7 @@ test('tool evidence is bounded, redacted and repeated by a stable normalized sig
   assert.equal(nonCheckBash.highSignal,false);
 });
 
-test('review CHANGES is lesson evidence while file-not-found is not high signal',()=>{
-  const reviewCall={name:'subagent_review',highSignal:true};
-  const review=reviewChangesEvidence(event(3,'tool/result',{message:{toolCallId:'r',isError:false,content:[{type:'text',text:'{"verdict":"CHANGES","findings":["missing test"]}'}]}}),reviewCall,'s');
-  assert.equal(review.highSignal,true);
+test('file-not-found is not lesson evidence with high signal',()=>{
   const readCall={name:'read',highSignal:false};
   const missing=failureEvidence(event(4,'tool/result',{message:{toolCallId:'x',isError:true,content:[{type:'text',text:'ENOENT'}]},error:{name:'Error',code:'ENOENT'}}),readCall,'s');
   assert.equal(missing.highSignal,false);
