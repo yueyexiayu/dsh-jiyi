@@ -221,7 +221,7 @@ test('judge forwards and returns diagnostics without changing strict ids/version
   assert.equal(f.requests.length, 1);
   const request = f.requests[0];
   assert.equal(request.system, RELEVANCE_SYSTEM);
-  assert.equal(request.maxTokens, 1024);
+  assert.equal(request.maxTokens, 2048);
   assert.deepEqual(request.tools, []);
   assert.deepEqual(JSON.parse(request.messages[0].content[0].text), input);
   assert.equal(Object.hasOwn(request, 'onDiagnostic'), false, 'Local diagnostics must not enter the model request');

@@ -9,6 +9,7 @@
 !/docs/assets/
 /docs/assets/*
 !/docs/assets/*.svg
+!/docs/INVARIANTS.md
 !/package.json
 !/cordis.patch.yml
 !/lib/

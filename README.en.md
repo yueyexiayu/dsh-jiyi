@@ -4,7 +4,7 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.34</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.35</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
@@ -12,9 +12,9 @@
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
 
-v0.1.34 adds versioned evidence and relations, structured decision logs, fact validity, isolated review conflicts, recall feedback and conservative offline consolidation that is off by default. The sidebar exposes evidence, inactive versions, pending review and decision history. A conflict cannot enter automatic recall until clear user evidence, an explicit time window and unchanged versions justify a decision.
+v0.1.35 replaces the hand-tuned recall weighting (`0.72·cosine + 0.28·lexical`) with RRF rank fusion: both channels rank independently and contribute `1/(60+rank)`, so a keyword hit with cosine 0 is no longer flattened by the other channel's scale. Packaging now uses greedy MMR with a per-`factKey` cap, so six slots cannot be filled by several versions of one fact. Expired validity no longer halves a score; it only removes the in-band time-decay tie-break. Every ranking and budget number is exported through `RETRIEVAL_CONSTANTS`, and [`docs/INVARIANTS.md`](docs/INVARIANTS.md) ties 16 invariants to the tests that guard them. The foreground recall deadline may now shorten but never extend the configured value (3s by default, relaxed to 10s while the embedder has never succeeded). A dangling call on the lesson-review path was fixed; it left repeated-failure lesson jobs stuck in `pending` forever.
 
-With dshbot, private Bot sessions are excluded from automatic review and recall, and memories sourced from them are excluded from model retrieval. Queued work is deferred and existing data is not deleted. Requests sent before a privacy change cannot be recalled; deferred work may resume if protection is lifted.
+v0.1.34 adds versioned evidence and relations, structured decision logs, fact validity, isolated review conflicts, recall feedback and conservative offline consolidation that is off by default. The sidebar exposes evidence, inactive versions, pending review and decision history. A conflict cannot enter automatic recall until clear user evidence, an explicit time window and unchanged versions justify a decision.
 
 This version starts with an empty memory store in `storages/jiyi-v2`; the old `storages/jiyi` is retained and is not imported automatically. Readable old model settings are reused on first startup without changing account credentials. Essential memories have an 8192-byte UTF-8 content budget; background review does not override user-selected categories or handwritten memories. Failed background jobs are retried through the queue and can be inspected in the sidebar. Recent saved changes can be expanded above the conversation composer.
 
@@ -118,7 +118,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.34** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.35** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
@@ -160,6 +160,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
+| 0.1.35 public-source regression · Node | **306 / 306** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; no failures, cancellations or skips |
 | 0.1.34 public-source regression · Node | **303 / 303** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
 | 0.1.33 public-source regression · Electron | **303 / 303** | Installed SDK and real ToolRuntime; no failures, cancellations or skips |
 | 0.1.16 public-source regression · Electron | **186 / 186** | Historical result: actual installed SDK; no failures, cancellations or skips |

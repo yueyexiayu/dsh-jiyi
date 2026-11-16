@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModels, validateEmbeddingConfig, EMBEDDING_MODEL, EMBEDDING_VERSION, EMBEDDING_DIMENSIONS } from '../lib/models.js';
-import { retrieve, cosineSimilarity, estimateTokens, renderMemoryContext } from '../lib/retrieve.js';
+import { retrieve, cosineSimilarity, estimateTokens, renderMemoryContext, RETRIEVAL_CONSTANTS, decayFactor, effectiveRecallTimeout, channelRanks } from '../lib/retrieve.js';
 import { searchMemories } from '../lib/search.js';
 
 const vector = (axis = 0) => Array.from({ length: EMBEDDING_DIMENSIONS }, (_, i) => i === axis ? 1 : 0);
@@ -141,8 +141,15 @@ test('evaluation evidence exposes scope, all candidate scores and rank/cap exclu
   assert.equal(scope.scopedRecords[0].kind,'decision');assert.equal(scope.scopedRecords[0].projectName,'Project A');
   assert.equal(candidates.semanticThreshold,.2);assert.equal(candidates.scores.length,3);
   const high=candidates.scores.find(r=>r.id==='high'), below=candidates.scores.find(r=>r.id==='below');
-  assert.equal(high.semanticScore,1);assert.equal(high.lexicalScore,0);assert.equal(high.scopeBonus,.025);
-  assert.equal(high.score,.745);assert.equal(high.candidateEligible,true);assert.deepEqual(high.overlappingTokens,[]);
+  // Rank fusion, not a weighted sum: equal cosine (1.0) ties on id, so 'capped'
+  // takes semantic rank 1 and 'high' rank 2; the lexical channel stays empty
+  // because neither content overlaps the query. scopeBonus is a fraction of one
+  // channel's full weight (0.1 / (rrfK+1)) rather than a fixed 0.025.
+  const unit = 1 / (RETRIEVAL_CONSTANTS.rrfK + 1);
+  assert.equal(high.semanticScore,1);assert.equal(high.lexicalScore,0);assert.equal(high.channels,1);
+  assert.ok(Math.abs(high.scopeBonus - 0.1 * unit) < 1e-12);
+  assert.ok(Math.abs(high.score - (1 / (RETRIEVAL_CONSTANTS.rrfK + 2) + 0.1 * unit)) < 1e-12);
+  assert.equal(high.candidateEligible,true);assert.deepEqual(high.overlappingTokens,[]);
   assert.equal(below.semanticScore,0);assert.equal(below.candidateEligible,false);
   assert.deepEqual(candidates.ranked.map(r=>r.id),['capped','high']);
   assert.deepEqual(candidates.proposed.map(r=>r.id),['capped']);
@@ -409,4 +416,117 @@ test('dispose during native inference waits for child exit and settles outstandi
   for (const pid of pids) assertGone(pid);
   assert.equal(models.getStatus().activeRequests, 0);
   await assert.rejects(models.embed(['服务已销毁']), { code: 'MODEL_DISPOSED' });
+});
+
+test('rank fusion keeps a cosine-zero keyword hit competitive with a weak semantic hit', async () => {
+  // Under the old 0.72*cosine + 0.28*lexical sum, a lexical-only hit was capped
+  // at 0.28 while a single high-cosine neighbour could reach 0.72. RRF gives
+  // each channel the same maximum, so both stay in the candidate pool.
+  // 'keyword' is orthogonal to the query vector (cosine 0) but matches the
+  // identifier lexically; 'semantic' is the reverse. Each owns one channel.
+  const records = [
+    memory('semantic', '完全无关的向量邻居'),
+    memory('keyword', 'renderInvoice 的约定', { embedding: vector(1) }),
+  ];
+  const evidence = [];
+  const result = await retrieve({ query: 'renderInvoice', records, onEvaluationDiagnostic: e => evidence.push(e) }, adapter, approveCandidates);
+  const candidates = evidence.find(e => e.stage === 'candidates');
+  assert.equal(candidates.fusion, 'rrf'); assert.equal(candidates.rrfK, RETRIEVAL_CONSTANTS.rrfK);
+  const keyword = candidates.scores.find(r => r.id === 'keyword');
+  const semantic = candidates.scores.find(r => r.id === 'semantic');
+  assert.equal(keyword.semanticScore, 0); assert.equal(keyword.channels, 1);
+  assert.ok(keyword.rrfScore > 0, 'a lexical-only hit must contribute its own channel rank');
+  assert.equal(semantic.channels, 1);
+  // Equal channel weight: the lexical-only hit is no longer capped below the
+  // semantic-only hit the way 0.28 vs 0.72 capped it.
+  assert.ok(Math.abs(keyword.rrfScore - semantic.rrfScore) < 1e-12);
+  assert.deepEqual(new Set(result.hits.map(h => h.id)), new Set(['keyword', 'semantic']));
+});
+
+test('fusion depends on rank, not on the order records arrive from the store', async () => {
+  const a = memory('a', 'alpha beta'), b = memory('b', 'alpha gamma', { embedding: vector(1) });
+  const forward = await retrieve({ query: 'alpha beta', records: [a, b], onEvaluationDiagnostic: e => forwardEvidence.push(e) }, adapter, approveCandidates);
+  const reverse = await retrieve({ query: 'alpha beta', records: [b, a], onEvaluationDiagnostic: e => reverseEvidence.push(e) }, adapter, approveCandidates);
+  assert.deepEqual(forward.hits.map(h => h.id), reverse.hits.map(h => h.id));
+  assert.deepEqual(forwardEvidence.at(-1).ranked, reverseEvidence.at(-1).ranked);
+});
+const forwardEvidence = [], reverseEvidence = [];
+
+test('validity expiry removes the decay tie-break instead of halving one score', () => {
+  const now = Date.parse('2026-11-16T00:00:00Z');
+  const fresh = decayFactor({ confirmedAgeHours: 0 }, false);
+  const halfLife = decayFactor({ confirmedAgeHours: 30 * 24 }, false);
+  assert.equal(fresh, 1); assert.ok(Math.abs(halfLife - 0.5) < 1e-12);
+  assert.equal(decayFactor({ confirmedAgeHours: 0 }, true), 0);
+  assert.equal(decayFactor({ confirmedAgeHours: null }, false), RETRIEVAL_CONSTANTS.decayNeutral);
+  // Expired validity is excluded by scopeFilter before ranking; decayFactor only
+  // orders surviving records, so no memory is silently down-weighted to 0.5.
+  const ranked = channelRanks([{ id: 'x', score: 1 }, { id: 'y', score: 1 }], item => item.score);
+  assert.equal(ranked.get(0), 1); assert.equal(ranked.get(1), 2);
+});
+
+test('packaging caps picks per factKey and keeps a diverse fill for six slots', async () => {
+  const records = [
+    memory('v1', '部署端口是 8080', { factKey: 'port' }),
+    memory('v2', '部署端口是 8081', { factKey: 'port' }),
+    memory('v3', '部署端口是 8082', { factKey: 'port' }),
+    memory('other', '部署入口在 /api', { factKey: 'entry' }),
+  ];
+  // Two overlapping content words keep every record lexically eligible, so the
+  // six-slot packaging stage — not the candidate gate — decides what survives.
+  const result = await retrieve({ query: '部署 端口 入口', records, maxMemories: 6, maxCandidates: 12 }, adapter, approveCandidates);
+  const portHits = result.hits.filter(h => h.factKey === 'port');
+  assert.ok(portHits.length <= RETRIEVAL_CONSTANTS.candidateFactKeyCap, JSON.stringify(result.hits.map(h => h.id)));
+  assert.ok(result.hits.some(h => h.factKey === 'entry'), 'diversity must leave room for another fact key');
+  assert.equal(result.diagnostics.diversity.factKeyCap, RETRIEVAL_CONSTANTS.candidateFactKeyCap);
+  assert.ok(result.diagnostics.diversity.factKeyCapped >= 1);
+});
+
+test('foreground recall budget shortens but never extends the configured value', () => {
+  assert.equal(effectiveRecallTimeout({ configuredMs: 10000, embeddingReady: true }), RETRIEVAL_CONSTANTS.foregroundTimeoutMs);
+  assert.equal(effectiveRecallTimeout({ configuredMs: 1200, embeddingReady: true }), 1200);
+  assert.equal(effectiveRecallTimeout({ configuredMs: 10000, embeddingReady: false }), RETRIEVAL_CONSTANTS.coldStartTimeoutMs);
+  assert.equal(effectiveRecallTimeout({ configuredMs: 100000, embeddingReady: false }), RETRIEVAL_CONSTANTS.coldStartTimeoutMs);
+  assert.equal(effectiveRecallTimeout({}), RETRIEVAL_CONSTANTS.foregroundTimeoutMs);
+});
+
+test('a rejected embedding after cancellation is observed, never an unhandled rejection', async () => {
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const abort = new AbortController();
+    const pending = retrieve({ query: '偏好', records: [memory('a', '偏好中文'), memory('b', '数学偏好')], signal: abort.signal, timeoutMs: 5000 },
+      { embed: async () => { setTimeout(() => abort.abort(), 1); return new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('late provider failure'), { code: 'LATE_FAILURE' })), 5)); } },
+      approveCandidates);
+    await assert.rejects(pending);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.deepEqual(unhandled, []);
+  } finally { process.off('unhandledRejection', onUnhandled); }
+});
+
+test('MMR keeps a single relevant hit instead of degrading to zero relevance', async () => {
+  // min-max normalisation divides by (max - min). With one candidate that range
+  // is empty, so the adaptive term must fall back to the raw key rather than 0;
+  // otherwise the only relevant memory would score below the diversity penalty
+  // and a six-slot budget could inject nothing.
+  const records = [memory('only', '部署端口是 8080', { factKey: 'port' })];
+  const result = await retrieve({ query: '部署端口', records, maxMemories: 6 }, adapter, approveCandidates);
+  assert.deepEqual(result.hits.map(h => h.id), ['only']);
+  assert.equal(result.diagnostics.decision, 'approved');
+  assert.equal(result.diagnostics.budgetSkipped, 0);
+});
+
+test('MMR adds a second fact key before a third version of the same key', async () => {
+  const records = [
+    memory('port-a', '部署 端口 8080', { factKey: 'port' }),
+    memory('port-b', '部署 端口 8081', { factKey: 'port' }),
+    memory('port-c', '部署 端口 8082', { factKey: 'port' }),
+    memory('entry', '部署 入口 /api', { factKey: 'entry' }),
+  ];
+  const result = await retrieve({ query: '部署 端口 入口', records, maxMemories: 6, maxCandidates: 12 }, adapter, approveCandidates);
+  const keys = result.hits.map(h => h.factKey);
+  assert.equal(keys.filter(k => k === 'port').length, RETRIEVAL_CONSTANTS.candidateFactKeyCap);
+  assert.ok(keys.includes('entry'), `expected a second fact key, got ${keys.join(',')}`);
+  assert.equal(result.diagnostics.diversity.factKeyCapped, 1);
 });

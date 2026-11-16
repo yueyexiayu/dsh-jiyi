@@ -58,6 +58,20 @@ test('one-shot prepared request preserves controls, explicit/default effort sema
   const unsupported=fixture([text('ok'),stop]);await assert.rejects(unsupported.call({}, {...config,reasoningEffort:'max'}),code('LLM_CONFIG'));
 });
 
+test('lowestEffort pins the model minimum so short strict answers cannot end as max-tokens', async () => {
+  const declared=fixture([text('{"ids":[]}'),stop],{reasoning:{efforts:[{id:'minimal'},{id:'high'}],defaultEffort:'high'}});
+  assert.equal(await declared.call({lowestEffort:true}),'{"ids":[]}');
+  assert.equal(declared.state.prepared.reasoningEffort,'minimal');
+  // A model that advertises no efforts must not acquire a made-up low effort.
+  const noEfforts=fixture([text('ok'),stop]);
+  noEfforts.ctx.llm.prepareCall=async(c,signal,configure)=>{
+    const resolved=configure({...c},{reasoning:{efforts:[]}});
+    assert.equal(Object.hasOwn(resolved,'reasoningEffort'),false);
+    return {config:resolved,stream:async function*(){yield text('ok');yield stop;}};
+  };
+  assert.equal(await noEfforts.call({lowestEffort:true}),'ok');
+});
+
 test('evaluation capture excludes credential-shaped config, replay envelopes and reasoning; default trace remains body-free', async () => {
   const raw=' {"ids":[]}\n',evidence=[],ordinary=[];
   const f=fixture([], {prepare:async()=>({config:{provider:'test-provider',model:'test-model',apiKey:'fixture-private-key',replayState:{private:'fixture-replay'}},stream:async function*(){
