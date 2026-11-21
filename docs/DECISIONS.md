@@ -63,3 +63,24 @@
 **决定。** 探针改为给旧记忆更早的明确用户证据、给候选更晚的证据，接受 `same_claim_newer` **或** `temporal_change`（store 两者同走替代路径），只校验引用同时命中 `memory:validation-memory:1` 与 `candidate:validation-candidate:candidate`，不再比对 `reasonCode`。一次不通过重试一次。同时给裁决子调用固定**最低推理档**——适配器默认高档时隐藏推理会吃光 `maxTokens`，流以 max-tokens 结束且没有任何 JSON。
 
 **后果。** 探针测的是「这个配置能不能正确判断谁更新」，不是「模型会不会说某句话」，在严格模型下也能通过。代价是判定放宽了一个枚举值（`same_claim_newer` 与 `temporal_change` 都算过），理论上更弱；但两者在 store 层走同一路径，判别上的差别不对应用户可见行为。重试一次意味着**最坏情况探针耗时翻倍**。
+
+---
+
+## D7 — 设置写入是补丁，空补丁才是「恢复默认」
+
+**背景。** v0.1.37 及之前，`op=settings` 直接走 `validateSettings(body.settings)`，而它从 `clone(DEFAULT_SETTINGS)` 起算。于是一个只想改 `retrieval.timeoutMs` 的调用方会把 `adjudication.minConfidence`、`consolidation`、`extraction` 全部悄悄重置成默认值，接口还返回 `ok:true`。用户永远看不到这次重置。
+
+**决定。** 新增 `mergeSettings(current, patch)` 按段落浅合并。唯一的例外是空补丁 `{}`：它表示「恢复默认」，直接写 `DEFAULT_SETTINGS`。
+
+**后果。** 部分提交不再破坏其它段落，而 `{}` 这个既有契约（多个测试依赖它做「整体重置」）保持不变。代价是语义分叉：空对象与「什么都不改」在直觉上应该等价，这里却被定义为相反的意思。这个歧义无法消除——两种含义都有人依赖——所以必须写进文档（`docs/API.md`）而不是留给调用方猜。
+
+---
+
+## D8 — 待审记忆的普通更新被拒绝，而不是静默结案
+
+**背景。** 一条 `reviewState='pending'` 的记忆如果被普通更新（后台整理给出的 `user-explicit` 证据），旧实现会解散冲突组并把 `review_state` 改回 `clear`，未裁决内容立刻进入自动召回。若换成「允许更新但保留 pending」，冲突组指向的旧版本已经不存在，裁决时会 `CONFLICT_STALE`，成为永远无法处理的死组。
+
+**决定。** 普通更新直接拒绝，抛 `CONFLICT_REVIEW_OPEN`。三类调用方可以结案：带 `user-correction` 证据的明确纠正、带裁决租约（`conflictGroupId`）的裁决路径、显式传 `resolveConflicts: true` 的调用方（手动纠正接口与巩固路径）。结案后由 `_syncReviewState` 按现存冲突组重新推导 `review_state`。
+
+**后果。** 隔离既不会被静默抹掉，也不会留下死组或孤儿 pending——三个问题一次解掉。代价是后台整理碰到待审记忆时会失败重试，直到用户裁决；这条失败会进 `attemptHistory`，在面板可见。另一个代价是 `putMemory` 的默认行为从「更新优先」变成「冲突优先」，任何新调用点都必须显式声明它是否有权结案。
+

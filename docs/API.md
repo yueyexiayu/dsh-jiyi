@@ -112,8 +112,10 @@ ok: !['error','timeout','not-configured'].includes(result.status)
 
 #### `settings`
 
-`{ op: 'settings', settings: {...} }` — 整体替换设置并重建模型实例。
+`{ op: 'settings', settings: {...} }` — 按段落合并设置并重建模型实例。
 
+- **非空 patch 是合并**：只覆盖你提交的段与键，其余段落保持当前值。提交 `{retrieval:{timeoutMs:5}}` 不会重置 `adjudication`、`consolidation` 或 `extraction`。
+- **空 patch `{}` 是恢复默认**：整份设置写回 `DEFAULT_SETTINGS`。这个例外保留了旧契约，别把它当「什么都不改」。
 - 后台抽取、裁决、巩固或设置更新进行中时报 `BUSY`。
 - 会把 `extraction` / `lessons` / `adjudication` 三个状态重置为 `not-verified` 或 `not-configured`，并清零抽取失败熔断。
 - 返回 `{ ok, settings }`。**保存成功不等于验证成功**，验证要用 §3.4 的探针。
@@ -236,6 +238,8 @@ ok: !['error','timeout','not-configured'].includes(result.status)
 | `EXTRACTION_VALIDATION` | 400 | 抽取探针未产出预期中文偏好 |
 | `BOUNDARY_BUSY` | 400 | 已有受控来源边界重放运行中 |
 | `RECALL_STALE` | 400 | 重放引用已失效、版本或原文不一致 |
+| `CONFLICT_STALE` | 400 | 冲突组已结案或租约失效，不能再操作 |
+| `CONFLICT_REVIEW_OPEN` | 400 | 记忆存在未决冲突，普通更新可能抹掉隔离 |
 | `MEMORY_ID_CONFLICT` | 400 | 新记忆标识冲突 |
 
 ---

@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.37</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.38</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+v0.1.38 fixes correctness defects found by an audit. **An ordinary question containing "wrong"** used to count as a user correction, travel through the `user-correction` evidence path, overwrite an existing memory and skip the review queue; correction detection now requires the marker to open the message and end a clause, so a misread can no longer overwrite a fact while a miss only sends it through normal review. **One unreadable session** used to keep the `recovering` set non-empty forever, silently stopping adjudication and consolidation; a failed recovery is now dequeued and recorded. **Essential memories** were re-appended on every step, growing the context linearly in any tool-using conversation; they are now deduplicated against `decision.messages`. **Changing a memory's `factKey`** used to silently mark whichever other memory held that key as superseded; it now raises `MEMORY_CONFLICT`. **`op=settings`** used to replace the whole document, so submitting one section reset every other section; it now merges per section, and only an empty patch `{}` restores defaults. **An ordinary update to a pending memory** used to dismiss the conflict group and flip `review_state` back to `clear`, letting undecided content into recall; it is now refused with `CONFLICT_REVIEW_OPEN`, while explicit user corrections and resolved adjudications still settle it. **A settled conflict group** could be reopened by a late worker failure; terminal states are now protected. **An exhausted conflict group** sat in `open` with no explanation; it now records that attempts are used up and it needs a human decision. **Two new memories sharing a `factKey` in one batch** used to roll the whole transaction back and lose every other memory; the first is stored and the rest go to review.
 
 v0.1.37 fills the engineering-documentation gaps: new [`docs/API.md`](docs/API.md) (every `/api/jiyi` op with parameter bounds, responses, error codes, plus the `jiyi_search` tool and redaction rules), [`docs/DECISIONS.md`](docs/DECISIONS.md) (background, decision and cost for six trade-offs: RRF fusion, MMR packaging, the shorten-only recall deadline, the separate v4 data directory, conflict isolation, and the semantic adjudication probe) and [`AGENTS.md`](AGENTS.md) (commands to run, data red lines, prohibitions). The validation section now states the run date, machine and command; `.gitignore` gains `*.pem` / `*.key` / `*.p12` / `*.pfx` so private keys cannot ride in through the allowlist. No runtime code changed in this release; the 307-test regression was rerun on 2026-11-21.
 
@@ -122,7 +124,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.37** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.38** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
@@ -162,10 +164,11 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 ## Validation
 
-**Most recent actual run**: 2026-11-21, macOS arm64, Node 24, local MiniLM assets, command `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`, **307 / 307 passed**, 0 failures, 0 cancellations, 0 skips, ~37 s. Every other row below is the historical record from that version's release, not a rerun in this session.
+**Most recent actual run**: 2026-11-21, macOS arm64, Node 24, local MiniLM assets, command `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`, **314 / 314 passed**, 0 failures, 0 cancellations, 0 skips. Every other row below is the historical record from that version's release, not a rerun in this session.
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
+| 0.1.38 public-source regression · Node | **314 / 314** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 7 audit regressions (correction detection, pending isolation, factKey collision, terminal conflict state, exhaustion marker, settings merge); no failures, cancellations or skips |
 | 0.1.36 public-source regression · Node | **307 / 307** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds adjudication-probe regression; no failures, cancellations or skips |
 | 0.1.35 public-source regression · Node | **306 / 306** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; no failures, cancellations or skips |
 | 0.1.34 public-source regression · Node | **303 / 303** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |

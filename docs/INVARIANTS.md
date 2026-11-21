@@ -117,8 +117,13 @@ quote 是原文的逐字片段。任一不满足即报 `RELEVANCE_PROTOCOL`，�
 `reviewState !== 'clear'` 的记忆不参与自动召回、essential 注入或普通检索；只有
 裁决落定并写入新版本后才恢复。
 
-- 位置：`lib/retrieve.js`（`scopeFilter`）、`lib/index.js`
-- 守护：`test/memory-lifecycle.test.mjs`、`test/client.test.mjs`
+隔离不能被旁路抹掉：对一条存在未决冲突组的记忆做普通更新（没有 `user-correction`
+证据、没有裁决租约、没有显式授权）会被拒绝并报 `CONFLICT_REVIEW_OPEN`，而不是
+悄悄解散冲突组再把 `review_state` 改回 `clear`。明确用户纠正与裁决落定可以结案，
+结案后再由现存冲突组重新推导 `review_state`，因此不会留下无法裁决的孤儿 pending。
+
+- 位置：`lib/store.js`（`putMemory` 的 `mayResolveConflicts` 与 `_syncReviewState`）、`lib/review.js`
+- 守护：`test/audit-0138.test.mjs`、`test/v4-lifecycle.test.mjs`、`test/memory-lifecycle.test.mjs`
 
 ## I15 — 后台失败可见、可重试，不静默吞掉
 

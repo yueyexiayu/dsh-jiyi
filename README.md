@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.37</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.38</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.38 修复审计发现的云记忆正确性缺陷：**包含 "wrong" 的普通提问**曾被视为用户纠正，经 `user-correction` 证据直通覆盖现存记忆并绕过待审队列；纠正识别现在要求标记出现在消息开头并结束一个分句，误判不再可能覆盖事实，漏判只让该事实走正常复核。**一条无法打开的会话**曾让 `recovering` 集合永久非空，使待审裁决与离线巩固彻底停摆；恢复失败现在出队并记录原因。**重要记忆**曾在每个 step 重复追加，带工具调用的对话里上下文线性膨胀；现在按 `decision.messages` 去重。**更新记忆的 `factKey`** 曾静默把占用同键的另一条记忆置为已替代；现在抛 `MEMORY_CONFLICT`。**`op=settings`** 曾整体替换，提交一个段落会静默重置其余全部设置；现在按段落合并，只有空补丁 `{}` 才恢复默认。**待审记忆的普通更新**曾解散冲突组并把 `review_state` 改回 `clear`，让未裁决内容直接进入召回；现在拒绝并报 `CONFLICT_REVIEW_OPEN`，明确用户纠正与裁决落定仍可结案。**已结案的冲突组**曾被迟到的 worker 失败重新打开；现在终结态受保护。**裁决次数耗尽**的组曾永久停在 `open` 且无任何提示；现在写入 `last_error` 说明已用尽、等待人工裁决。**同一批整理里两条同 `factKey` 的新记忆**曾让整个事务回滚、其余记忆全部丢失；现在首条落库、其余转入待审。
 
 v0.1.37 补齐工程文档：新增 [`docs/API.md`](docs/API.md)（`/api/jiyi` 的 op、参数边界、返回与错误码，以及 `jiyi_search` 工具和脱敏约定）、[`docs/DECISIONS.md`](docs/DECISIONS.md)（RRF 融合、MMR 打包、截止可缩短不可延长、v4 独立目录、冲突隔离、裁决探针语义化六项取舍的理由与代价）与 [`AGENTS.md`](AGENTS.md)（在本仓库干活要跑的命令、数据红线与禁止事项）。README 验证章补上实测日期、机器环境与命令；`.gitignore` 补 `*.pem` / `*.key` / `*.p12` / `*.pfx`，避免私钥随白名单放行入库。本轮无运行时代码变更，307 项回归在 2026-11-21 重跑通过。
 
@@ -122,7 +124,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.37**，Host 报 `schemaVersion=4`。
+- 确认 **Client / Host 均为 0.1.38**，Host 报 `schemaVersion=4`。
 - 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 「插件」页的 jiyi 详情里也能改同一份设置（不提供真实验证按钮，验证仍回「记忆」面板）。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
@@ -162,10 +164,11 @@ node -e "console.log(require.resolve('jiyi'))"
 
 ## 验证
 
-**最近一次实测**：2026-11-21，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`，实测 **307 / 307 通过**，失败 0、取消 0、跳过 0，耗时约 37 秒。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
+**最近一次实测**：2026-11-21，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`，实测 **314 / 314 通过**，失败 0、取消 0、跳过 0。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
+| 0.1.38 公开源码回归 · Node | **314 / 314** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 7 条审计回归（纠正识别、待审隔离、factKey 碰撞、冲突终结态、耗尽标记、设置合并）；无失败、取消或跳过 |
 | 0.1.36 公开源码回归 · Node | **307 / 307** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增裁决探针回归；无失败、取消或跳过 |
 | 0.1.35 公开源码回归 · Node | **306 / 306** | 合成来源、受控 LLM，实际本地 Embedding / SDK；无失败、取消或跳过 |
 | 0.1.34 公开源码回归 · Node | **303 / 303** | 合成来源、受控 LLM，实际本地 Embedding / SDK |
