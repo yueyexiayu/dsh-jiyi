@@ -921,3 +921,19 @@ for(const transport of ['ipc','cli']) for(const liveEvents of [false,true]) test
     }
   }
 });
+
+test('adjudication probe accepts any replacing label and still fails a non-replacing verdict',async()=>{
+  const f=await fixture();
+  try {
+    const original=f.ctx.llm.prepareCall;let verdict='temporal_change',reason='model_authored_code';
+    f.ctx.llm.prepareCall=async(config,signal,configure)=>{const call=await original(config,signal,configure),stream=call.stream;call.stream=async function*(request){const payload=JSON.parse(request.messages[0].content[0].text);if(!payload.group) return yield* stream(request);const memory=payload.group.members.find(item=>item.kind==='memory'),candidate=payload.group.members.find(item=>item.kind==='candidate');yield {type:'text-delta',index:0,text:JSON.stringify({decision:verdict,confidence:.95,references:[{kind:'memory',id:memory.id,version:memory.version},{kind:'candidate',id:candidate.id,version:null}],reasonCode:reason})};yield {type:'finish',reason:{kind:'stop'}};};return call;};
+    const first=await f.request('verifyAdjudication',{sessionId:f.session.id});
+    assert.equal(first.ok,true,JSON.stringify(first));
+    assert.equal(first.result.validationDecision,'temporal_change');
+    reason='a_completely_different_free_form_code';verdict='same_claim_newer';
+    const second=await f.request('verifyAdjudication',{sessionId:f.session.id});assert.equal(second.ok,true,JSON.stringify(second));
+    verdict='unresolved';
+    const rejected=await f.request('verifyAdjudication',{sessionId:f.session.id});assert.equal(rejected.ok,false);assert.match(rejected.error,/裁决探针未返回预期的替代结果/);
+    assert.equal((await f.state()).models.adjudication.status,'error');
+  } finally {await f.cleanup();}
+});

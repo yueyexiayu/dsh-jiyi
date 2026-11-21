@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.35</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.36</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+v0.1.36 fixes 「真实验证裁决」 failing on strict models. The adjudication probe used to pin both `decision=same_claim_newer` and the model-authored `reasonCode=newer_user_evidence`, which tested wording rather than judgement. The probe now gives the older claim an earlier explicit user evidence and the candidate a later one, accepts `same_claim_newer` or `temporal_change` (the store supersedes through the same path for both), no longer compares the free-text `reasonCode`, and retries once. The adjudication subcall also pins the lowest reasoning effort: a high adapter default spent the whole 900-token budget on hidden reasoning, ending the stream as max-tokens with no JSON at all.
 
 v0.1.35 replaces the hand-tuned recall weighting (`0.72·cosine + 0.28·lexical`) with RRF rank fusion: both channels rank independently and contribute `1/(60+rank)`, so a keyword hit with cosine 0 is no longer flattened by the other channel's scale. Packaging now uses greedy MMR with a per-`factKey` cap, so six slots cannot be filled by several versions of one fact. Expired validity no longer halves a score; it only removes the in-band time-decay tie-break. Every ranking and budget number is exported through `RETRIEVAL_CONSTANTS`, and [`docs/INVARIANTS.md`](docs/INVARIANTS.md) ties 16 invariants to the tests that guard them. The foreground recall deadline may now shorten but never extend the configured value (3s by default, relaxed to 10s while the embedder has never succeeded). A dangling call on the lesson-review path was fixed; it left repeated-failure lesson jobs stuck in `pending` forever.
 
@@ -118,7 +120,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.35** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.36** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
@@ -160,6 +162,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
+| 0.1.36 public-source regression · Node | **307 / 307** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds adjudication-probe regression; no failures, cancellations or skips |
 | 0.1.35 public-source regression · Node | **306 / 306** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; no failures, cancellations or skips |
 | 0.1.34 public-source regression · Node | **303 / 303** | Synthetic sources and controlled LLMs; actual local embeddings / SDK |
 | 0.1.33 public-source regression · Electron | **303 / 303** | Installed SDK and real ToolRuntime; no failures, cancellations or skips |

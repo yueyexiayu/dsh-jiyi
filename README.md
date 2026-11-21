@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.35</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.36</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.36 修复「真实验证裁决」在严格模型下无法通过的问题。裁决探针原先同时固定 `decision=same_claim_newer` 和模型自造的 `reasonCode=newer_user_evidence`，等于在考措辞而不是判断；现在给旧记忆更早的明确用户证据、候选更晚的证据，接受 `same_claim_newer` 或 `temporal_change`（store 两者同走替代旧记忆的路径），不再比对自由文本 `reasonCode`，并在一次不通过时重试。裁决子调用同时固定最低推理档：适配器默认高档时隐藏推理会吃光 900 的 `maxTokens`，流以 max-tokens 结束且没有任何 JSON。
 
 v0.1.35 把召回排序从手调加权（`0.72·余弦 + 0.28·词法`）换成 RRF 排名融合：两个通道各自排名后按 `1/(60+rank)` 相加，余弦为 0 的关键词命中不再被另一个通道的量级压到底。打包阶段改用 MMR 贪心选取并给同一 `factKey` 设上限，六个槽位不会被同一事实的多个版本占满。生效期结束从「分数腰斩」改成只作同带内的时间衰减 tie-break。所有排序与预算数字集中导出为 `RETRIEVAL_CONSTANTS`，并新增 [`docs/INVARIANTS.md`](docs/INVARIANTS.md) 把 16 条不变量与守护测试对起来。前台召回截止改为「可缩短不可延长」（默认 3s，`embedder` 从未成功过时放宽到 10s）。修复了一处 lesson 整理路径上的失效调用，它会让重复失败的教训任务永远停在 `pending`。
 
@@ -118,7 +120,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.35**，Host 报 `schemaVersion=4`。
+- 确认 **Client / Host 均为 0.1.36**，Host 报 `schemaVersion=4`。
 - 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 「插件」页的 jiyi 详情里也能改同一份设置（不提供真实验证按钮，验证仍回「记忆」面板）。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
@@ -160,6 +162,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
+| 0.1.36 公开源码回归 · Node | **307 / 307** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增裁决探针回归；无失败、取消或跳过 |
 | 0.1.35 公开源码回归 · Node | **306 / 306** | 合成来源、受控 LLM，实际本地 Embedding / SDK；无失败、取消或跳过 |
 | 0.1.34 公开源码回归 · Node | **303 / 303** | 合成来源、受控 LLM，实际本地 Embedding / SDK |
 | 0.1.33 公开源码回归 · Electron | **303 / 303** | 安装包内实际 SDK 与真实 ToolRuntime；无失败、取消或跳过 |
