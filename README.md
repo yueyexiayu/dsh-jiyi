@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.36</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.37</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.37 补齐工程文档：新增 [`docs/API.md`](docs/API.md)（`/api/jiyi` 的 op、参数边界、返回与错误码，以及 `jiyi_search` 工具和脱敏约定）、[`docs/DECISIONS.md`](docs/DECISIONS.md)（RRF 融合、MMR 打包、截止可缩短不可延长、v4 独立目录、冲突隔离、裁决探针语义化六项取舍的理由与代价）与 [`AGENTS.md`](AGENTS.md)（在本仓库干活要跑的命令、数据红线与禁止事项）。README 验证章补上实测日期、机器环境与命令；`.gitignore` 补 `*.pem` / `*.key` / `*.p12` / `*.pfx`，避免私钥随白名单放行入库。本轮无运行时代码变更，307 项回归在 2026-11-21 重跑通过。
 
 v0.1.36 修复「真实验证裁决」在严格模型下无法通过的问题。裁决探针原先同时固定 `decision=same_claim_newer` 和模型自造的 `reasonCode=newer_user_evidence`，等于在考措辞而不是判断；现在给旧记忆更早的明确用户证据、候选更晚的证据，接受 `same_claim_newer` 或 `temporal_change`（store 两者同走替代旧记忆的路径），不再比对自由文本 `reasonCode`，并在一次不通过时重试。裁决子调用同时固定最低推理档：适配器默认高档时隐藏推理会吃光 900 的 `maxTokens`，流以 max-tokens 结束且没有任何 JSON。
 
@@ -120,7 +122,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.36**，Host 报 `schemaVersion=4`。
+- 确认 **Client / Host 均为 0.1.37**，Host 报 `schemaVersion=4`。
 - 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 「插件」页的 jiyi 详情里也能改同一份设置（不提供真实验证按钮，验证仍回「记忆」面板）。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
@@ -160,6 +162,8 @@ node -e "console.log(require.resolve('jiyi'))"
 
 ## 验证
 
+**最近一次实测**：2026-11-21，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`，实测 **307 / 307 通过**，失败 0、取消 0、跳过 0，耗时约 37 秒。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
+
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
 | 0.1.36 公开源码回归 · Node | **307 / 307** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增裁决探针回归；无失败、取消或跳过 |
@@ -190,6 +194,16 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。当前相关性规则为 `jiyi-relevance-v9`，后台记忆整理版本为 `jiyi-review-v2`。Electron 测试覆盖安装包 SDK 与 ToolRuntime，但不能替代隔离 Host 中右侧栏和真实 SQLite 的运行验收。
 
 </details>
+
+## 文档索引
+
+| 文档 | 回答什么 |
+| :--- | :--- |
+| [README.md](README.md) | 是什么、怎么装、怎么跑、怎么升级卸载 |
+| [docs/API.md](docs/API.md) | `/api/jiyi` 的 op、参数、返回、错误码，以及 `jiyi_search` 工具 |
+| [docs/INVARIANTS.md](docs/INVARIANTS.md) | 16 条必须始终成立的行为，及其守护测试 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 关键取舍的背景、决定与代价 |
+| [AGENTS.md](AGENTS.md) | 在本仓库里干活的操作约定：命令、数据红线、禁止事项 |
 
 ## 常见问题
 

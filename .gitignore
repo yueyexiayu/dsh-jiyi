@@ -1,6 +1,7 @@
 # Publish an explicit source-only tree. Local evidence and runtime data stay private.
 /*
 !/.gitignore
+!/AGENTS.md
 !/LICENSE
 !/README.md
 !/README.en.md
@@ -9,6 +10,8 @@
 !/docs/assets/
 /docs/assets/*
 !/docs/assets/*.svg
+!/docs/API.md
+!/docs/DECISIONS.md
 !/docs/INVARIANTS.md
 !/package.json
 !/cordis.patch.yml
@@ -40,3 +43,7 @@
 **/*.log
 **/.env*
 **/*credentials*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
