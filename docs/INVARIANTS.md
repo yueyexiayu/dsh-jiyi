@@ -109,7 +109,7 @@ quote 是原文的逐字片段。任一不满足即报 `RELEVANCE_PROTOCOL`，�
 `validTo` 已过、`validFrom` 未到的记忆在候选过滤阶段就被排除；时间衰减只用于
 给存活记忆排序，不再充当「过期即腰斩」的开关。
 
-- 位置：`lib/retrieve.js`（`scopeFilter`、`decayFactor`）
+- 位置：`lib/retrieve.js`（`scopeFilter`、`decayFactor`；年龄下限钳制到 0）
 - 守护：`test/status.test.mjs`、`test/retrieve.test.mjs`「validity expiry removes the decay tie-break instead of halving one score」
 
 ## I14 — 待审冲突不进自动召回
@@ -134,6 +134,9 @@ quote 是原文的逐字片段。任一不满足即报 `RELEVANCE_PROTOCOL`，�
 - 守护：`test/retry.test.mjs`、`test/host.test.mjs`
 
 ## I16 — 关闭是幂等的
+
+重复调用关闭路径必须是 no-op：Host 的退出与 profile 重载可能各触发一次 dispose，
+第二次不得抛 `AggregateError`，`store.close()` 重复调用也不得抛 `ERR_INVALID_STATE`。
 
 会话关闭、插件 dispose、Host 退出可重复调用，第二次起为 no-op 且不抛错。
 
