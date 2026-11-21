@@ -27,7 +27,16 @@
 // GET 的 search 例外：ok 由检索状态推导，见 §3.4
 ```
 
-**HTTP 状态与业务码不是一回事。** 实际只有两种状态码：`code === 'NOT_FOUND'` 时 404，其余一切失败都是 400。业务语义必须读 `code`，不能靠状态码推断——例如「模型未配置」和「参数非法」都是 400。
+**HTTP 状态与业务码不是一回事。** 状态码按错误性质分层，不要靠它推断业务含义：
+
+| 状态 | 何时 | 例子 |
+| :--- | :--- | :--- |
+| 404 | `code === 'NOT_FOUND'` | 记忆或来源事件不存在 |
+| 409 | `BUSY` / `EVAL_BUSY` | 后台任务或评测正在运行 |
+| 500 | 内部故障：`code` 形如 `E*`、`ERR_*`、`SQLITE_*` | 设置文件不可写、数据库损坏 |
+| 400 | 其余（参数非法、业务规则拒绝） | `INVALID_SCOPE`、`CONFLICT_REVIEW_OPEN` |
+
+「模型未配置」与「参数非法」都是 400，因为两者都需要调用方改输入；磁盘故障是 500，因为调用方的参数没问题。
 
 **输出一律脱敏。** 响应经 `redactPublicValue`（`lib/index.js:42`）处理；记忆对象经 `publicMemory`（`lib/index.js:724`）剔除 `embedding` 并补 `type`、`projectName`；冲突对象经 `publicConflict`（`lib/index.js:725`）剔除 `token`、`leaseUntil`。
 

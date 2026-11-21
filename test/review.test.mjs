@@ -28,9 +28,15 @@ test('review input redacts credentials but preserves locators',()=>{
 });
 
 test('manual and user-controlled memories cannot be changed or forgotten',()=>{
+  // The skip must also be reported: silently returning nothing let the caller record
+  // "ready" success while the user's correction was dropped.
+  const unchanged = result => {
+    assert.deepEqual({memories:result.memories,candidates:result.candidates,forget:result.forget},{memories:[],candidates:[],forget:[]});
+    assert.deepEqual(result.skippedProtected,[{memoryId:'old',operation:result.skippedProtected[0].operation}]);
+  };
   for(const protectedOld of [{...old,userControlled:true},{...old,sources:[{origin:'manual'}]}]) {
-    assert.deepEqual(parse([op],[protectedOld]),{memories:[],candidates:[],forget:[]});
-    assert.deepEqual(parse([{type:'forget',memoryId:'old',sourceSeqs:[2],quotes:['英文偏好已经不再适用']}],[protectedOld]),{memories:[],candidates:[],forget:[]});
+    const update=parse([op],[protectedOld]);unchanged(update);assert.equal(update.skippedProtected[0].operation,'update');
+    const forget=parse([{type:'forget',memoryId:'old',sourceSeqs:[2],quotes:['英文偏好已经不再适用']}],[protectedOld]);unchanged(forget);assert.equal(forget.skippedProtected[0].operation,'forget');
   }
 });
 
