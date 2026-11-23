@@ -13,6 +13,7 @@
 !/docs/API.md
 !/docs/DECISIONS.md
 !/docs/INVARIANTS.md
+!/docs/SECURITY-P0-DESIGN.md
 !/package.json
 !/cordis.patch.yml
 !/lib/
