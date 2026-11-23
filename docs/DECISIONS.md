@@ -126,5 +126,42 @@
 
 **后果。** 长时间不用时内存回到基线，代价是**下一个请求要重新冷启动**（进程启动加管线加载，之前已由 `coldStartTimeoutMs` 覆盖）。5 分钟的选择是有意的：短于此的连续使用不受影响，长于此的间隔里省下的内存更值钱。注意这意味着「首次召回慢」不再只发生一次，而是每次空闲超时后都可能发生——`effectiveRecallTimeout` 的冷启动放宽逻辑仍然覆盖这些情况。
 
+---
+
+## D13 — 诊断历史有界：账本 2000 条、done 队列 3000 条
+
+**背景。** `recall_ledger` 每行都带 6000 字符的脱敏查询尾部，安全审计在一台正常使用的机器上量到 2,130 行、25.6 MB 诊断明细，占 37.7 MB 主库的约三分之二；`queue` 的 `done` 行只增不减。两者都没有上限，库会随使用时长单调变大，备份、迁移和复制整库的评测都跟着变慢。
+
+**决定。** `recordRecall` 之后调用 `store.pruneHistory()`：账本按 `created_at, rowid` 从旧到新删到 2000 行；`queue` 只删 `done` 行到 3000 行，`failed` 行保留（面板还要用它重试）。`recall_feedback` 引用旧账本且没有 `ON DELETE CASCADE`，所以同一事务里先删反馈行再删账本行，否则外键会拒绝删除。上限是 `lib/store.js` 导出的常量，测试用显式小上限验证，不依赖真实规模。
+
+**后果。** 库的大小与年龄解耦，诊断明细不再无限累积。代价是**面板上能回看的召回历史只有最近 2000 次**，更早的召回记录被删除（记忆正文、证据、决策日志不受影响，那些表没有裁剪）。选择从旧到新删而不是按天删，是因为空闲机器与繁忙机器应该保留同样多的「最近 N 次」上下文，而不是「最近 N 天里恰好 3 次」。
+
+---
+
+## D14 — 源会话不可读时丢弃 watch，而不是把它变成永久失败横幅
+
+**背景。** 2026-11-23 的真实故障：一份 2026-11-19 写下的会话日志结构损坏（`assistant/message` 落在 `turn/end` 之后），启动恢复时 `sessionPersistence.open` 抛 `SessionFormatError`。旧路径把它交给 `emitFailure('recovery', …)`，于是 `metadata.lastFailure` 被持久化，右侧栏从此常驻一条 Host 失败提示；而失败的输入永远不会变好，重试永远失败。会话被用户删除时同理（`ENOENT`）。
+
+**决定。** 恢复失败先分类：`SessionFormatError` / `stored log is corrupt` 记为 `corrupt-log`，`ENOENT` / `session not found` 记为 `missing-session`。命中任一类就丢弃该 watch、记进 `metadata.recoverySkips`（按时间最多 20 条）、清掉属于 `recovery` 的 `lastFailure`，并只打一行 `console.error`。其他错误（磁盘、权限、超时）仍走原来的 `emitFailure`，仍然可见可重试。
+
+**后果。** 一个坏掉的会话不再污染整个插件的状态栏，`pumpConflicts` / `pumpConsolidation` 也不会被它卡住。代价是**这类跳过不像其他失败那样显眼**：它只出现在 `recoverySkips` 与日志里，面板不弹提示。这是有意的取舍——源已经不存在，提醒用户「去修」没有可执行的动作，而 `recoverySkips` 保留了事后排查需要的证据。
+
+---
+
+## D15 — 脱敏覆盖无键名凭据，但保留 40 位 git 对象号
+
+**背景。** 审计指出的 P1 是「写时明文、读时才脱敏」：`recall_ledger.details`、`memory_evidence.quote`、`memories.sources` 里都是原文。而脱敏函数只认有键名的形状（`api_key:`、`password:`）和带前缀的 token（`sk-`、`ghp_`、`AKIA`），一串裸 JWT、一整行 `Cookie:`、一个无键名的 64 位摘要、一段随机 token 都能毫发无损地穿过去。
+
+**决定。** `lib/redact.js` 增加四类形状：JWT（三段 base64url）、`Cookie:` / `Set-Cookie:` 整值、32/64 位裸十六进制摘要、长度 ≥32 且大小写数字混合的裸 token。前两类无条件清除；**后两类只在同一行还出现凭据词**（`key` / `token` / `secret` / `password` / 凭据 / 密钥 / 口令）时清除。UUID 在替换回调里显式放行（记忆与版本 id 必须可读），40 位小写十六进制永不脱敏（git 对象号）。
+
+**为什么「无键名」的两类要加这层限制。** 第一版把两种形状都无条件清除，全量回归连着挂了两次，两次都是同类错误——**没有键名的高熵串，在只读上下文里根本分不清是凭据还是标识符**：
+
+1. 32/64 位裸十六进制被无条件替换，`contentSha256` / `quoteSha256` 一起变成 `[REDACTED_DIGEST]`，I3（引用要能被核对）与 I4（版本一致才注入）的证据链断了，`state` 与 `memories` 返回的哈希也不再是哈希。
+2. 裸 token 被无条件替换，`Xenova/paraphrase-multilingual-MiniLM-L12-v2` 这个 embedding 模型 id 被替换成 `[REDACTED_TOKEN]`，插件随后报 `Local embedding model is not installed: Xenova/[REDACTED_TOKEN]`，设置保存直接失败。
+
+凭据词同行的规则把两件事同时保住：哈希与模型 id 在普通行里原样保留，而「`api key 3f2a…`」「`token Zk3Q…`」这类**没有冒号**的写法仍然会被清除。JWT 与 `Cookie:` 不需要这条限制——它们的形状本身没有歧义。
+
+**后果。** 裸凭据不再因为「没有键名」而漏网。代价有两个：一是 40 位 sha 的凭据（少见）仍会被放过，这是为了让 git 定位符可读付的价；二是 `cookie: 这个字段说明…` 这类中文值仍按散文保留，所以一条用中文写的 cookie 说明不会被清成 `[REDACTED]`，与 D11 的 CJK 规则一致。
+
 
 

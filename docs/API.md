@@ -52,6 +52,8 @@ GET 只承载读操作，参数全部走 query string。`op` 缺省为 `state`�
 
 返回整个插件的运行快照。可附带 §2.2 的全部分页参数来限定返回的 `memories` 一栏。
 
+`failure` 是最近一次持久化的 Host 级失败（没有则为 `null`）。**源会话不可恢复时不写这个字段**：会话日志损坏或会话已被删除时，watch 会被丢弃并记进 `recoverySkips`（按会话 id 索引，最多保留 20 条，每条含 `reason`、`error`、`at`），启动不再留下永不消失的横幅。
+
 ### 2.2 `memories`
 
 `GET /api/jiyi?op=memories&sessionId=<id>&memoryOffset=0&memoryLimit=200`

@@ -130,6 +130,10 @@ quote 是原文的逐字片段。任一不满足即报 `RELEVANCE_PROTOCOL`，�
 抽取、判别、裁决、巩固的失败都要进队列并保留 `attemptHistory`；关闭期间的中止
 不算持久失败。
 
+一个边界：**源会话本身不可读**（日志损坏、会话已被删除）属于「没有可恢复的输入」，
+不是后台任务失败。这种 watch 会被丢弃并记进 `recoverySkips`，不写 `lastFailure`，
+因为重试永不可能成功，写成持久横幅只会让用户看到一条无法消除的错误。
+
 - 位置：`lib/index.js`（`emitFailure`、`processJob`）、`lib/retry.js`
 - 守护：`test/retry.test.mjs`、`test/host.test.mjs`
 

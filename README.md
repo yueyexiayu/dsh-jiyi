@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.40</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.41</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.41 处理安全审计里插件自己能改的其余项。**脱敏补齐无键名凭据形态**：JWT、`Cookie:` / `Set-Cookie:` 整值、32/64 位裸摘要、长随机 token 现在都会被清掉；UUID 与 40 位 git 对象号保留，免得证据定位符被一起抹掉。**诊断历史有界**：`recall_ledger` 只保留最近 2000 条、`queue` 的 `done` 行只保留最近 3000 条，反馈行随账本一起删；此前一次正常使用就把 25.6 MB 诊断明细塞进 37.7 MB 的主库。**源会话不可读不再变成永久横幅**：会话日志损坏或会话已被删除时，watch 被丢弃并记进 `recoverySkips`，而不是把一次永远不可能成功的恢复失败持久成 Host 失败提示。**错误色跟上 Host 主题**：新版 Host 删掉了 `--dsw-alias-danger-fg`，改用 `--dsw-alias-state-error-primary` 并保留回退值。
 
 v0.1.40 修复审计发现的 P2 层缺陷。**诊断数字不再虚高**：同一 `factKey` 超额的候选原先每扫一轮就计一次且留在待选里，1 条被挡报成 4–6 条；现在计一次并出队。**判别器与注入用同一份正文**：注入会脱敏，判别器却看原文，导致 `quoteStart/quoteEnd` 指向另一段文本、证据定位与正文对不上；现在判断、偏移、grounding 与命中都用脱敏后的同一份文本。**脱敏不再吞掉正常中文**：`讨论 secret: 这是一个普通中文句子` 曾被整段替换成 `[REDACTED]`，现在含 CJK 的值视为散文保留，真正的凭据照旧清除。**关闭变得幂等**：重复 dispose 曾抛 `AggregateError`（`store.close` 第二次报 `ERR_INVALID_STATE`），现在第二次起是 no-op，符合 I16。**空闲 embedding 进程 5 分钟后释放**，不再让两个常驻子进程各占约 129 MiB，`dispose()` 之后 `getStatus` 也正确报 `disposed`。**JSON 围栏容错**：围栏标成大写 JSON、围栏后附一句「以上是结果」、或以说明文字开头都曾整批失败并被当作可重试，现在统一由一个容错解析器处理。**失败签名保留区分度**：原先把所有数字归一成 `<n>`，`test case 1` 与 `case 2` 被算作同一问题重复出现并触发教训提炼；现在只归一化 UUID、时间戳与源码位置。**冲突扫描不再阻塞事件循环**：事实键匹配改用索引、分词与主语锚点按记录缓存，12 条新增对 10000 条既有从约 1.3 秒降到约 37 毫秒。**排序破平改用码元比较**（`localeCompare` 对 Unicode 正规化等价形式返回 0，会退化成输入顺序），**未来时间戳的衰减因子钳制到 1**。
 
@@ -130,7 +132,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.40**，Host 报 `schemaVersion=4`。
+- 确认 **Client / Host 均为 0.1.41**，Host 报 `schemaVersion=4`。
 - 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 「插件」页的 jiyi 详情里也能改同一份设置（不提供真实验证按钮，验证仍回「记忆」面板）。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
@@ -170,10 +172,11 @@ node -e "console.log(require.resolve('jiyi'))"
 
 ## 验证
 
-**最近一次实测**：2026-11-21，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`，实测 **326 / 326 通过**，失败 0、取消 0、跳过 0。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
+**最近一次实测**：2026-11-23，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /opt/homebrew/bin/node --test --test-timeout=90000 test/*.test.mjs`（本机 node 在 `/opt/homebrew/bin`，文档旧命令里的 `/usr/local/bin` 在这台机器上不存在），实测 **336 / 336 通过**，失败 0、取消 0、跳过 0。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
+| 0.1.41 公开源码回归 · Node | **336 / 336** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 10 条回归（四类无键名凭据脱敏、账本与队列上限及反馈级联删除、不可读/已删除会话跳过 ×2）；无失败、取消或跳过 |
 | 0.1.40 公开源码回归 · Node | **326 / 326** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 7 条 P2 回归（cap 计数、脱敏保真、关闭幂等、围栏容错、签名区分度、索引一致、衰减钳制）；无失败、取消或跳过 |
 | 0.1.39 公开源码回归 · Node | **319 / 319** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 5 条 P1 回归（错误分类、保护记忆可见、教训 scope 默认）；无失败、取消或跳过 |
 | 0.1.38 公开源码回归 · Node | **314 / 314** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 7 条审计回归（纠正识别、待审隔离、factKey 碰撞、冲突终结态、耗尽标记、设置合并）；无失败、取消或跳过 |
@@ -223,6 +226,9 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 
 **必须让主模型调用搜索工具吗？**<br/>
 不用。自动流程优先，`jiyi_search` 是显式检索的补充入口。
+
+**提供方要填什么？**<br/>
+填 Host 配置里 `providers` 的**键名**，也就是 provider **id**（本机是 `magpie`、`lefei`、`open-design-0803`），不是显示名（`Magpie`、`乐飞`）。填显示名时 Host 报 `NO_ADAPTER`：相关性与提取全部失败，面板里表现为提取电路故障与召回一直 error。id 只在插件启动时读取，改完要完整退出并重开 DSH 才生效。
 
 **更新、迁移和卸载怎么做？**<br/>
 更新前备份插件与设置。v4 启动迁移在 SQLite 事务内执行，并在 v1/v2/v3 迁移前用 WAL 一致的 `VACUUM INTO` 备份；失败会关闭连接并恢复迁移前备份。迁移和开发验收必须使用临时 dataDir 或副本，不能拿正式 `jiyi-v2` 做演练。别名补登仍走 [显式迁移脚本](<scripts/migrate-aliases.mjs>)，先审阅计划和备份，不静默重写正式记忆。

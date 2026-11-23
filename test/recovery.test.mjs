@@ -38,7 +38,7 @@ function workspace(t) {
   });
   return {dir,session,events,db,activeStops};
 }
-async function launch(w,{read,extractMemories=false,beforeExtraction,guard}={}) {
+async function launch(w,{read,extractMemories=false,beforeExtraction,guard,openError=null}={}) {
   const listeners=new Map(),effects=[],routes=new Map(),inputs=[];
   let opens=0,closes=0,stopped=false;
   const helpers={createUserMessage:installedLlm?.createUserMessage??(x=>({...x,id:randomUUID(),role:'user'})),BlockAssembler:installedLlm?.BlockAssembler??FixtureTextAssembler};
@@ -65,6 +65,7 @@ async function launch(w,{read,extractMemories=false,beforeExtraction,guard}={}) 
     agents:{get:()=>null},sessions:{get:id=>id===w.session.id?w.session:null},
     sessionPersistence:{open:async id=>{
       assert.equal(id,w.session.id);opens++;
+      if(openError) throw openError;
       return {header:w.session.header,read:async(from,to,{signal}={})=>{
         if(!read)return {events:w.events.filter(e=>e.seq>=from)};
         let abort;
@@ -366,4 +367,32 @@ test('real SQLite restart restores pending watch and pending queue with real loc
   assert.equal(replayed.queue.length,2);assert.ok(replayed.queue.every(j=>j.status==='done'));
   assert.equal(replayed.memories.length,2);assert.equal(f.inputs.length,0);
   await f.stop();
+});
+
+// A watch can outlive its source. Retrying an unreadable or deleted session cannot succeed, so
+// the watch is dropped and the skip is reported separately instead of becoming a durable
+// Host failure banner that never clears (the session-6cf1d500 defect).
+test('an unreadable stored log drops the watch instead of pinning a permanent failure banner',async t=>{
+  const w=workspace(t);
+  const corrupt=Object.assign(new Error(`session "${w.session.id}": stored log is corrupt: SessionFormatError: assistant/message does not match an open turn and step`),{code:'SESSION_FORMAT_ERROR',name:'SessionFormatError'});
+  w.db(s=>s.setMetadata('watchedSessions',{[w.session.id]:{cursor:0,pending:[],pendingTaskIds:[]}}));
+  const f=await launch(w,{openError:corrupt});
+  t.after(async()=>{await f.stop();});
+  const state=await until(async()=>{const snapshot=await f.state();return snapshot.recoverySkips?.[w.session.id]?snapshot:null;});
+  assert.equal(state.failure,null,'a dropped watch must not stay a durable Host failure banner');
+  assert.equal(state.recoverySkips[w.session.id].reason,'corrupt-log');
+  assert.match(state.recoverySkips[w.session.id].error,/SessionFormatError/u);
+  w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id],undefined));
+});
+
+test('a watch whose session no longer exists is dropped as missing instead of failing every start',async t=>{
+  const w=workspace(t);
+  const missing=Object.assign(new Error(`session "${w.session.id}" not found`),{code:'ENOENT'});
+  w.db(s=>s.setMetadata('watchedSessions',{[w.session.id]:{cursor:0,pending:[],pendingTaskIds:[]}}));
+  const f=await launch(w,{openError:missing});
+  t.after(async()=>{await f.stop();});
+  const state=await until(async()=>{const snapshot=await f.state();return snapshot.recoverySkips?.[w.session.id]?snapshot:null;});
+  assert.equal(state.recoverySkips[w.session.id].reason,'missing-session');
+  assert.equal(state.failure,null);
+  w.db(s=>assert.equal(s.getMetadata('watchedSessions')[w.session.id],undefined));
 });

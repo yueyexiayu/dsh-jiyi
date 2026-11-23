@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.40</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.41</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+v0.1.41 handles the remaining audit items the plugin can fix on its own. **Redaction now covers keyless credential shapes**: JWTs, whole `Cookie:` / `Set-Cookie:` values, bare 32/64-character digests and long random tokens are removed; UUIDs and 40-character git object ids survive so evidence locators stay readable. **Diagnostic history is bounded**: `recall_ledger` keeps the newest 2000 rows, `queue` keeps the newest 3000 `done` rows, and feedback rows are deleted with their ledger row; one ordinary machine had accumulated 25.6 MB of diagnostic detail inside a 37.7 MB database. **An unreadable source session no longer becomes a permanent banner**: when a stored log is corrupt or the session was deleted, the watch is dropped and recorded in `recoverySkips` instead of persisting a recovery failure that can never succeed. **The error colour follows the Host theme**: the new Host removed `--dsw-alias-danger-fg`, so `--dsw-alias-state-error-primary` is used with the old value as fallback.
 
 v0.1.40 fixes the P2 defects found by the audit. **The cap diagnostic no longer inflates**: a same-`factKey` candidate over the cap was counted once per scan pass and left in the pending list, so one real drop was reported as 4-6; it is counted once and removed. **The judge and the injection now see the same body**: injection redacts, the judge read the raw text, so `quoteStart/quoteEnd` pointed into a different string and evidence locators no longer matched the body; judging, offsets, grounding and hits all use the same redacted text. **Redaction no longer eats ordinary Chinese**: `讨论 secret: 这是一个普通中文句子` was rewritten wholesale to `[REDACTED]`; CJK values are now treated as prose while real credentials are still removed. **Closing is idempotent**: a duplicate dispose used to raise `AggregateError` (`store.close` failing with `ERR_INVALID_STATE` on the second call); the second run is now a no-op, per I16. **Idle embedding processes are released after 5 minutes** instead of pinning two children at ~129 MiB each, and `getStatus` reports `disposed` after `dispose()`. **JSON fences are tolerated**: an uppercase JSON fence label, an apology after the fence, or a sentence before the object all used to fail the whole batch and be retried; one tolerant parser handles them now. **Failure signatures keep their distinguishing numbers**: collapsing every number to `<n>` made `test case 1` and `case 2` look like the same problem recurring and triggered lesson extraction; only UUIDs, timestamps and source locations are normalised. **Conflict scanning no longer blocks the event loop**: fact-key matching uses an index with per-record token and subject-anchor caches, taking 12 additions against 10 000 records from ~1.3 s to ~37 ms. **Ties break on code units** (`localeCompare` returns 0 for Unicode-normalisation equivalents and degrades to input order), and **a future confirmation time is clamped so the decay factor cannot exceed 1**.
 
@@ -130,7 +132,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.40** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.41** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
@@ -170,10 +172,11 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 ## Validation
 
-**Most recent actual run**: 2026-11-21, macOS arm64, Node 24, local MiniLM assets, command `NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs`, **326 / 326 passed**, 0 failures, 0 cancellations, 0 skips. Every other row below is the historical record from that version's release, not a rerun in this session.
+**Most recent actual run**: 2026-11-23, macOS arm64, Node 24, local MiniLM assets, command `NODE_OPTIONS='' /opt/homebrew/bin/node --test --test-timeout=90000 test/*.test.mjs` (node lives in `/opt/homebrew/bin` on this machine; the older documented `/usr/local/bin` path does not exist here), **336 / 336 passed**, 0 failures, 0 cancellations, 0 skips. Every other row below is the historical record from that version's release, not a rerun in this session.
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
+| 0.1.41 public-source regression · Node | **336 / 336** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 10 regressions (four keyless credential shapes, ledger and queue bounds with feedback cascade, unreadable and deleted session skips); no failures, cancellations or skips |
 | 0.1.40 public-source regression · Node | **326 / 326** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 7 P2 regressions (cap counting, redaction fidelity, idempotent close, fence tolerance, signature separation, index parity, decay clamp); no failures, cancellations or skips |
 | 0.1.39 public-source regression · Node | **319 / 319** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 5 P1 regressions (error classification, visible protected-memory skips, lesson scope default); no failures, cancellations or skips |
 | 0.1.38 public-source regression · Node | **314 / 314** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 7 audit regressions (correction detection, pending isolation, factKey collision, terminal conflict state, exhaustion marker, settings merge); no failures, cancellations or skips |
@@ -223,6 +226,9 @@ No. State polling pauses when the panel tab or document is hidden, but the Host 
 
 **Does the main model have to call a search tool?**<br/>
 No. Automatic recall is the normal path; `jiyi_search` is an explicit supplementary entry point.
+
+**What goes into the provider field?**<br/>
+The **id** of a provider, meaning the key under `providers` in the Host configuration (on this machine `magpie`, `lefei`, `open-design-0803`), not its display name (`Magpie`). A display name makes the Host answer `NO_ADAPTER`: relevance and extraction both fail, which shows up as an extraction-circuit fault and recalls that stay in `error`. The id is read only at plugin start, so quit and reopen DSH for a change to take effect.
 
 **How do updates, migrations and removal work?**<br/>
 Back up the plugin and settings before updating. The v4 startup migration runs inside a SQLite transaction and creates a WAL-consistent `VACUUM INTO` backup before migrating v1/v2/v3. A failure closes the connection and restores the pre-migration backup. Migration drills and development acceptance must use a temporary data directory or copy, never the production `jiyi-v2` store. Alias backfills still use the [explicit migration script](<scripts/migrate-aliases.mjs>); inspect its plan and back up before applying it.
