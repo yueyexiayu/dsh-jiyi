@@ -24,10 +24,10 @@ node scripts/prepare-models.mjs      # 固定 revision，逐文件校验字节�
 
 ```sh
 # 语法检查（改动 lib/ 或 scripts/ 后必跑）
-for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
+for file in lib/*.js scripts/*.mjs; do node --check "$file" || exit; done
 
 # 公开回归测试（提交前必跑）
-NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs
+NODE_OPTIONS='' node --test --test-timeout=90000 test/*.test.mjs
 ```
 
 - 报结果只能报实测数字。没跑就写「未跑」，不许写「应该通过」。

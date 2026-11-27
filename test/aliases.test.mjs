@@ -63,10 +63,10 @@ test('migration CLI backs up WAL-aware SQLite before writing and never deletes o
   const {dir,database,store}=fixture(t),p=store.resolveProject({cwd:join(dir,'银杏B')});store.deleteProjectAlias(p.id,'银杏B');store.addProjectAlias(p.id,'保留别名');
   const script=resolve(import.meta.dirname,'../scripts/migrate-aliases.mjs'),preview=join(dir,'preview.json'),backup=join(dir,'backup.sqlite'),output=join(dir,'result.json');
   const before=databaseSnapshot(database);
-  execFileSync('/usr/local/bin/node',[script,'--plan','--database',database,'--output',preview]);
+  execFileSync(process.execPath,[script,'--plan','--database',database,'--output',preview]);
   assert.deepEqual(databaseSnapshot(database),before);
   assert.deepEqual(JSON.parse(readFileSync(preview,'utf8')).plan.additions.map(r=>r.alias),['银杏B']);
-  execFileSync('/usr/local/bin/node',[script,'--apply','--database',database,'--preview',preview,'--backup',backup,'--output',output]);
+  execFileSync(process.execPath,[script,'--apply','--database',database,'--preview',preview,'--backup',backup,'--output',output]);
   const result=JSON.parse(readFileSync(output,'utf8'));assert.equal(result.ok,true);assert.deepEqual(result.removed,[]);
   assert.ok(store.getProject(p.id).aliases.includes('保留别名'));assert.ok(store.getProject(p.id).aliases.includes('银杏B'));
   const restored=new MemoryStore(backup);try {assert.ok(restored.getProject(p.id).aliases.includes('保留别名'));assert.equal(restored.getProject(p.id).aliases.includes('银杏B'),false);}finally{restored.close();}

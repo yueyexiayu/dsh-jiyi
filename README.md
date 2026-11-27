@@ -4,13 +4,15 @@
   <p><strong>让重要的事实留下来，让相关的上下文恰好出现。</strong></p>
   <p>为 DeepSeek Harness 带来可追溯、有边界的跨会话记忆。</p>
   <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
-  <p><a href="package.json">v0.1.41</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.42</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#核心能力">核心能力</a> · <a href="#工作方式">工作方式</a> · <a href="#快速开始">快速开始</a> · <a href="#配置">配置</a> · <a href="#验证">验证</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 ---
 
 不必在每个新会话里重复交代项目约定。jiyi 在用户回合正常完成后后台整理有明确来源的长期事实，并从用户明确纠正、同类高信号失败第二次出现或明确 review/test/build 失败中提炼可复用的“教训”。教训只用于以后召回和提醒，不会自动修改项目代码。重要记忆按全局和当前项目范围自动载入，普通记忆通过中文和语义混合检索按需召回；输入框上方可以展开查看当前会话最近的已保存变化。
+
+v0.1.42 修一处「换台机器就跑不起来」的工程缺陷。**解释器路径不再硬编码**：回归测试的子进程改用 `process.execPath`，`scripts.test` 与文档命令改用 `node`（走 PATH）；此前写死 `/usr/local/bin/node`，在该路径不存在的机器上 7 项 CLI、迁移与评测用例直接以 `ENOENT` 失败，README 里的「336/336 通过」无法复现。**补齐 `CHANGELOG.md`**：0.1.14–0.1.42 的变更记录集中到一处，回滚时不必再翻 `git log`。本轮无运行时代码变更。
 
 v0.1.41 处理安全审计里插件自己能改的其余项。**脱敏补齐无键名凭据形态**：JWT、`Cookie:` / `Set-Cookie:` 整值、32/64 位裸摘要、长随机 token 现在都会被清掉；UUID 与 40 位 git 对象号保留，免得证据定位符被一起抹掉。**诊断历史有界**：`recall_ledger` 只保留最近 2000 条、`queue` 的 `done` 行只保留最近 3000 条，反馈行随账本一起删；此前一次正常使用就把 25.6 MB 诊断明细塞进 37.7 MB 的主库。**源会话不可读不再变成永久横幅**：会话日志损坏或会话已被删除时，watch 被丢弃并记进 `recoverySkips`，而不是把一次永远不可能成功的恢复失败持久成 Host 失败提示。**错误色跟上 Host 主题**：新版 Host 删掉了 `--dsw-alias-danger-fg`，改用 `--dsw-alias-state-error-primary` 并保留回退值。
 
@@ -132,7 +134,7 @@ node -e "console.log(require.resolve('jiyi'))"
 
 **⌘Q 完全退出 DSH，再重新打开。** 从应用菜单“在浏览器中打开”进入正常认证入口，在右侧栏打开“记忆”：
 
-- 确认 **Client / Host 均为 0.1.41**，Host 报 `schemaVersion=4`。
+- 确认 **Client / Host 均为 0.1.42**，Host 报 `schemaVersion=4`。
 - 配置并分别验证提取、Embedding、相关性与冲突裁决模型。
 - 「插件」页的 jiyi 详情里也能改同一份设置（不提供真实验证按钮，验证仍回「记忆」面板）。
 - 保存设置不等于验证成功；不要分享带认证信息的浏览器链接。
@@ -172,10 +174,11 @@ node -e "console.log(require.resolve('jiyi'))"
 
 ## 验证
 
-**最近一次实测**：2026-11-23，macOS arm64、Node 24、本机 MiniLM 资产，命令 `NODE_OPTIONS='' /opt/homebrew/bin/node --test --test-timeout=90000 test/*.test.mjs`（本机 node 在 `/opt/homebrew/bin`，文档旧命令里的 `/usr/local/bin` 在这台机器上不存在），实测 **336 / 336 通过**，失败 0、取消 0、跳过 0。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
+**最近一次实测**：2026-11-28，macOS arm64、Node 26.13.1、本机 MiniLM 资产，命令 `NODE_OPTIONS='' node --test --test-timeout=90000 test/*.test.mjs`（`node` 走 PATH；0.1.42 起不再硬编码解释器路径），实测 **336 / 336 通过**，失败 0、取消 0、跳过 0。下表其余各行是各版本发布时的历史记录，不是本次重跑结果。
 
 | 验证类型 | 结果 | 如何理解 |
 | :--- | :--- | :--- |
+| 0.1.42 公开源码回归 · Node | **336 / 336** | 合成来源、受控 LLM，实际本地 Embedding / SDK；本轮无新增用例，验证解释器路径修复后回归仍全绿；无失败、取消或跳过 |
 | 0.1.41 公开源码回归 · Node | **336 / 336** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 10 条回归（四类无键名凭据脱敏、账本与队列上限及反馈级联删除、不可读/已删除会话跳过 ×2）；无失败、取消或跳过 |
 | 0.1.40 公开源码回归 · Node | **326 / 326** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 7 条 P2 回归（cap 计数、脱敏保真、关闭幂等、围栏容错、签名区分度、索引一致、衰减钳制）；无失败、取消或跳过 |
 | 0.1.39 公开源码回归 · Node | **319 / 319** | 合成来源、受控 LLM，实际本地 Embedding / SDK；新增 5 条 P1 回归（错误分类、保护记忆可见、教训 scope 默认）；无失败、取消或跳过 |
@@ -195,14 +198,14 @@ node -e "console.log(require.resolve('jiyi'))"
 <details>
 <summary><strong>复现公开回归测试</strong></summary>
 
-先安装依赖与模型，并确保 `/Applications/DeepSeek Harness.app` 和 `/usr/local/bin/node` 可用。测试使用独立临时 SQLite，不需要云端账号，不操作正式记忆。缺少桌面 SDK 或资产会明确失败，不当作通过。
+先安装依赖与模型，并确保 `/Applications/DeepSeek Harness.app` 和 `node` 可用。测试使用独立临时 SQLite，不需要云端账号，不操作正式记忆。缺少桌面 SDK 或资产会明确失败，不当作通过。
 
 ```sh
-NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs
+NODE_OPTIONS='' node --test --test-timeout=90000 test/*.test.mjs
 ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
   '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness' \
   --test --test-timeout=90000 test/*.test.mjs
-for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
+for file in lib/*.js scripts/*.mjs; do node --check "$file" || exit; done
 ```
 
 公开夹具独立于私有会话；`evidence/` 仅保留空目录占位，运行输出被忽略。当前相关性规则为 `jiyi-relevance-v9`，后台记忆整理版本为 `jiyi-review-v2`。Electron 测试覆盖安装包 SDK 与 ToolRuntime，但不能替代隔离 Host 中右侧栏和真实 SQLite 的运行验收。
@@ -217,6 +220,7 @@ for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || ex
 | [docs/API.md](docs/API.md) | `/api/jiyi` 的 op、参数、返回、错误码，以及 `jiyi_search` 工具 |
 | [docs/INVARIANTS.md](docs/INVARIANTS.md) | 16 条必须始终成立的行为，及其守护测试 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 关键取舍的背景、决定与代价 |
+| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么，回滚时选哪一版 |
 | [AGENTS.md](AGENTS.md) | 在本仓库里干活的操作约定：命令、数据红线、禁止事项 |
 
 ## 常见问题

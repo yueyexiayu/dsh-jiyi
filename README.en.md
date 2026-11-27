@@ -4,13 +4,15 @@
   <p><strong>Keep the facts that matter. Bring back the context that fits.</strong></p>
   <p>Traceable, scoped cross-session memory for DeepSeek Harness.</p>
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
-  <p><a href="package.json">v0.1.41</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
+  <p><a href="package.json">v0.1.42</a> &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; <a href="https://github.com/topics/dsh-plugin">dsh-plugin</a></p>
   <p><a href="#features">Features</a> · <a href="#how-it-works">How it works</a> · <a href="#quick-start">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#validation">Validation</a> · <a href="#faq">FAQ</a></p>
 </div>
 
 ---
 
 Stop repeating project conventions in every new conversation. After a normal user turn completes, jiyi extracts **facts with explicit user evidence** in the background. It can also turn explicit corrections, the second occurrence of a high-signal failure, or an evidenced review/test/build failure into a reusable lesson. Lessons are remembered and recalled; they never modify code automatically. When relevant new input arrives, jiyi retrieves within scope, independently checks support, and supplies the original memory. It does not dump all history into context or treat similarity as sufficient evidence.
+
+v0.1.42 fixes a portability defect that only shows up on another machine. **The interpreter path is no longer hardcoded**: test subprocesses use `process.execPath`, and `scripts.test` and the documented commands use `node` (resolved through PATH). The previous `/usr/local/bin/node` literal made seven CLI, migration and evaluation cases fail with `ENOENT` on machines without that path, so the claimed "336/336" could not be reproduced. **`CHANGELOG.md` now exists**, covering 0.1.14–0.1.42 so a rollback no longer requires reading `git log`. No runtime code changed in this release.
 
 v0.1.41 handles the remaining audit items the plugin can fix on its own. **Redaction now covers keyless credential shapes**: JWTs, whole `Cookie:` / `Set-Cookie:` values, bare 32/64-character digests and long random tokens are removed; UUIDs and 40-character git object ids survive so evidence locators stay readable. **Diagnostic history is bounded**: `recall_ledger` keeps the newest 2000 rows, `queue` keeps the newest 3000 `done` rows, and feedback rows are deleted with their ledger row; one ordinary machine had accumulated 25.6 MB of diagnostic detail inside a 37.7 MB database. **An unreadable source session no longer becomes a permanent banner**: when a stored log is corrupt or the session was deleted, the watch is dropped and recorded in `recoverySkips` instead of persisting a recovery failure that can never succeed. **The error colour follows the Host theme**: the new Host removed `--dsw-alias-danger-fg`, so `--dsw-alias-state-error-primary` is used with the old value as fallback.
 
@@ -132,7 +134,7 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 **Quit DSH fully with ⌘Q, then reopen it.** Use the application's normal authenticated “Open in browser” menu entry and open the memory sidebar:
 
-- Confirm **Client / Host both report 0.1.41** and Host reports `schemaVersion=4`.
+- Confirm **Client / Host both report 0.1.42** and Host reports `schemaVersion=4`.
 - Configure and separately verify extraction, embedding, relevance and conflict-adjudication models.
 - The plugin-manager page for jiyi edits the same settings file, without the real-verification buttons; run those on the memory panel.
 - Saving settings is not a successful model check. Do not share authentication-bearing browser links.
@@ -172,10 +174,11 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 
 ## Validation
 
-**Most recent actual run**: 2026-11-23, macOS arm64, Node 24, local MiniLM assets, command `NODE_OPTIONS='' /opt/homebrew/bin/node --test --test-timeout=90000 test/*.test.mjs` (node lives in `/opt/homebrew/bin` on this machine; the older documented `/usr/local/bin` path does not exist here), **336 / 336 passed**, 0 failures, 0 cancellations, 0 skips. Every other row below is the historical record from that version's release, not a rerun in this session.
+**Most recent actual run**: 2026-11-28, macOS arm64, Node 26.13.1, local MiniLM assets, command `NODE_OPTIONS='' node --test --test-timeout=90000 test/*.test.mjs` (`node` resolved through PATH; since 0.1.42 the interpreter path is no longer hardcoded), **336 / 336 passed**, 0 failures, 0 cancellations, 0 skips. Every other row below is the historical record from that version's release, not a rerun in this session.
 
 | Validation type | Result | Interpretation |
 | :--- | :--- | :--- |
+| 0.1.42 public-source regression · Node | **336 / 336** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; no new cases this round, verifying the interpreter-path fix leaves the regression green; no failures, cancellations or skips |
 | 0.1.41 public-source regression · Node | **336 / 336** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 10 regressions (four keyless credential shapes, ledger and queue bounds with feedback cascade, unreadable and deleted session skips); no failures, cancellations or skips |
 | 0.1.40 public-source regression · Node | **326 / 326** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 7 P2 regressions (cap counting, redaction fidelity, idempotent close, fence tolerance, signature separation, index parity, decay clamp); no failures, cancellations or skips |
 | 0.1.39 public-source regression · Node | **319 / 319** | Synthetic sources and controlled LLMs; actual local embeddings / SDK; adds 5 P1 regressions (error classification, visible protected-memory skips, lesson scope default); no failures, cancellations or skips |
@@ -195,14 +198,14 @@ Do not `- insert:` the same id in desktop `cordis.patch.yml`. To change configur
 <details>
 <summary><strong>Reproduce public regression tests</strong></summary>
 
-Install dependencies and models first, with `/Applications/DeepSeek Harness.app` and `/usr/local/bin/node` available. Tests use independent temporary SQLite databases, require no cloud account and do not modify production memories. Missing desktop SDKs or assets fail explicitly; they are not counted as passes.
+Install dependencies and models first, with `/Applications/DeepSeek Harness.app` and `node` available. Tests use independent temporary SQLite databases, require no cloud account and do not modify production memories. Missing desktop SDKs or assets fail explicitly; they are not counted as passes.
 
 ```sh
-NODE_OPTIONS='' /usr/local/bin/node --test --test-timeout=90000 test/*.test.mjs
+NODE_OPTIONS='' node --test --test-timeout=90000 test/*.test.mjs
 ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS='' \
   '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness' \
   --test --test-timeout=90000 test/*.test.mjs
-for file in lib/*.js scripts/*.mjs; do /usr/local/bin/node --check "$file" || exit; done
+for file in lib/*.js scripts/*.mjs; do node --check "$file" || exit; done
 ```
 
 Public fixtures are independent of private conversations. `evidence/` contains only an empty-directory placeholder; runtime outputs are ignored. The current relevance rules are `jiyi-relevance-v9` and background memory review is `jiyi-review-v2`. Electron coverage uses the installed SDK and real ToolRuntime, but does not replace an isolated Host acceptance run for the sidebar and real SQLite flow.
@@ -217,6 +220,7 @@ Public fixtures are independent of private conversations. `evidence/` contains o
 | [docs/API.md](docs/API.md) | `/api/jiyi` ops, parameters, responses and error codes, plus the `jiyi_search` tool |
 | [docs/INVARIANTS.md](docs/INVARIANTS.md) | 16 behaviours that must always hold, and the tests guarding them |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Background, decision and cost for each key trade-off |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and which version to roll back to |
 | [AGENTS.md](AGENTS.md) | Operating rules for working in this repo: commands, data red lines, prohibitions |
 
 ## FAQ

@@ -13,7 +13,7 @@ import { databaseSnapshot } from '../lib/eval-integrity.js';
 test('CLI uses package version and rejects mismatched discovery and Host identity',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'ji-cli-version-'));
   let close, runs=0;
-  const cli=(...args)=>new Promise(resolve=>execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),...args],(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
+  const cli=(...args)=>new Promise(resolve=>execFile(process.execPath,[join(import.meta.dirname,'../scripts/evaluate.mjs'),...args],(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
   try {
     const packageVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
     assert.equal(VERSION,packageVersion);
@@ -48,9 +48,9 @@ test('CLI defaults to jiyi-v2 and Host startup removes sockets owned by exited p
   const dir=join(home,'storages','jiyi-v2');mkdirSync(dir,{recursive:true});
   let close;
   try {
-    const missing=await new Promise(resolve=>execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--status'],{env:{...process.env,DSH_HOME:home}},(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
+    const missing=await new Promise(resolve=>execFile(process.execPath,[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--status'],{env:{...process.env,DSH_HOME:home}},(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr})));
     assert.equal(missing.exit,1);assert.match(missing.stderr,/storages\/jiyi-v2\/eval-endpoint\.json/);
-    const child=await new Promise((resolve,reject)=>execFile('/usr/local/bin/node',['-e',"const net=require('node:net');const path=require('node:path');const s=net.createServer();s.listen(path.join(process.argv[1],'eval-'+process.pid+'.sock'),()=>{console.log(process.pid);process.exit(0)})",dir],(error,stdout)=>error?reject(error):resolve(Number(stdout.trim()))));
+    const child=await new Promise((resolve,reject)=>execFile(process.execPath,['-e',"const net=require('node:net');const path=require('node:path');const s=net.createServer();s.listen(path.join(process.argv[1],'eval-'+process.pid+'.sock'),()=>{console.log(process.pid);process.exit(0)})",dir],(error,stdout)=>error?reject(error):resolve(Number(stdout.trim()))));
     const stale=join(dir,`eval-${child}.sock`);assert.equal(existsSync(stale),true);
     close=await createEvaluationIpc({dataDir:dir,version:VERSION,runtime:{pid:process.pid,loadedAt:'socket-cleanup'},run:async()=>({ok:true})});
     assert.equal(existsSync(stale),false);
@@ -76,7 +76,7 @@ for(const mutation of ['metadata','missing-settings']) test(`CLI rejects success
       return {ok:true,qualityPassed:true,status:'completed',runDir,integrity:{unchanged:true,passed:true,evaluationPrefix:'jiyi-eval-cli-fixture-',before:baseline,after:baseline,settingsBefore:settingsSha256,settingsAfter:settingsSha256},error:null};
     }});
     const response=await new Promise(resolve=>{
-      execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--run','--input','fixture-not-read.json','--data-dir',dir],{maxBuffer:2*1024*1024},(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr}));
+      execFile(process.execPath,[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--run','--input','fixture-not-read.json','--data-dir',dir],{maxBuffer:2*1024*1024},(error,stdout,stderr)=>resolve({exit:error?.code??0,stdout,stderr}));
     });
     assert.equal(response.exit,1,response.stderr);
     const result=JSON.parse(response.stdout);

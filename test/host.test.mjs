@@ -843,7 +843,7 @@ for(const transport of ['ipc','cli']) for(const liveEvents of [false,true]) test
     if(transport==='cli') {
       const {execFile}=await import('node:child_process');
       pending=new Promise((resolve,reject)=>{
-        execFile('/usr/local/bin/node',[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--run','--input',inputPath,'--cases','1','--data-dir',state.paths.dataDir],{maxBuffer:2*1024*1024},(error,stdout,stderr)=>{
+        execFile(process.execPath,[join(import.meta.dirname,'../scripts/evaluate.mjs'),'--run','--input',inputPath,'--cases','1','--data-dir',state.paths.dataDir],{maxBuffer:2*1024*1024},(error,stdout,stderr)=>{
           try {resolve({...JSON.parse(stdout),cliExit:error?.code??0,cliStderr:stderr});}catch(e){reject(new Error(`${e.message}: ${stderr}`));}
         });
       });
